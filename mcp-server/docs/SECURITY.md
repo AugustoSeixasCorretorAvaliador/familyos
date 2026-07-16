@@ -3,7 +3,7 @@
 ## Authentication
 
 - Accepts Supabase JWT in `Authorization: Bearer ...`.
-- Signature verification via `SUPABASE_JWT_SECRET`.
+- Validates the bearer token with the project's Supabase Auth server.
 - Rejects token without `sub`.
 
 ## Family Scope
@@ -34,7 +34,7 @@
 ## Hardening Recommendations
 
 - Use short JWT expiry and refresh in caller layer.
-- Rotate `SUPABASE_JWT_SECRET` with controlled migration window.
+- Prefer asymmetric Supabase JWT signing keys when configuring future key rotation.
 - Restrict who can issue capability headers.
 - Keep service role only on the MCP server.
 - Do not expose `x-familyos-capabilities` issuance to untrusted clients.

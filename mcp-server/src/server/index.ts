@@ -15,6 +15,11 @@ function headerValue(headers: Record<string, string | undefined>, key: string) {
   return headers[key] ?? headers[key.toLowerCase()];
 }
 
+function metadataValue(metadata: Record<string, unknown> | undefined, key: string) {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 function parseScopes(value: string | undefined) {
   return (value ?? "")
     .split(/[,\s]+/)
@@ -51,29 +56,53 @@ export async function startServer() {
           headers?: Record<string, string | undefined>;
           ip?: string;
         };
+        _meta?: Record<string, unknown>;
+        sessionId?: string;
       };
 
       const headers = requestInfo.requestInfo?.headers ?? {};
+      const requestMetadata = requestInfo._meta;
       const ip = requestInfo.requestInfo?.ip ?? "unknown";
       const metadata = {
-        requestId: headerValue(headers, "x-request-id") ?? randomUUID(),
-        sessionId: headerValue(headers, "mcp-session-id") ?? headerValue(headers, "x-session-id"),
+        requestId:
+          headerValue(headers, "x-request-id") ??
+          metadataValue(requestMetadata, "familyos/request-id") ??
+          randomUUID(),
+        sessionId:
+          headerValue(headers, "mcp-session-id") ??
+          headerValue(headers, "x-session-id") ??
+          requestInfo.sessionId ??
+          metadataValue(requestMetadata, "familyos/session-id"),
         ip,
         userAgent: headerValue(headers, "user-agent"),
-        clientName: headerValue(headers, "x-familyos-client-name"),
-        clientVersion: headerValue(headers, "x-familyos-client-version"),
+        clientName:
+          headerValue(headers, "x-familyos-client-name") ??
+          metadataValue(requestMetadata, "familyos/client-name"),
+        clientVersion:
+          headerValue(headers, "x-familyos-client-version") ??
+          metadataValue(requestMetadata, "familyos/client-version"),
       };
       let auth: Awaited<ReturnType<typeof buildAuthContextFromBearer>> | undefined;
       let auditId: string | undefined;
 
       try {
-        auth = await buildAuthContextFromBearer(headerValue(headers, "authorization"), {
-          familyId: headerValue(headers, "x-familyos-family-id"),
+        auth = await buildAuthContextFromBearer(
+          headerValue(headers, "authorization") ??
+            metadataValue(requestMetadata, "familyos/authorization"),
+          {
+          familyId:
+            headerValue(headers, "x-familyos-family-id") ??
+            metadataValue(requestMetadata, "familyos/family-id"),
           clientName: metadata.clientName,
           clientVersion: metadata.clientVersion,
           userAgent: metadata.userAgent,
-          googleAccessToken: headerValue(headers, "x-google-access-token"),
-          googleScopes: parseScopes(headerValue(headers, "x-google-scopes")),
+          googleAccessToken:
+            headerValue(headers, "x-google-access-token") ??
+            metadataValue(requestMetadata, "familyos/google-access-token"),
+          googleScopes: parseScopes(
+            headerValue(headers, "x-google-scopes") ??
+              metadataValue(requestMetadata, "familyos/google-scopes"),
+          ),
         });
 
         auditId = await auditService.startAudit({
@@ -84,7 +113,10 @@ export async function startServer() {
           input: rawInput,
         });
 
-        const grants = parseCapabilityHeader(headerValue(headers, "x-familyos-capabilities"));
+        const grants = parseCapabilityHeader(
+          headerValue(headers, "x-familyos-capabilities") ??
+            metadataValue(requestMetadata, "familyos/capabilities"),
+        );
 
         const required = toolCapabilities[tool.name] ?? [];
         assertCapabilities(tool.name, required, grants);

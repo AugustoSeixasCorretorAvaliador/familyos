@@ -1,5 +1,4 @@
-import { createSecretKey } from "node:crypto";
-import { jwtVerify } from "jose";
+import { createClient } from "@supabase/supabase-js";
 import { env } from "../config/env";
 import { AppError } from "../utils/errors";
 
@@ -13,13 +12,25 @@ export type SupabaseJwtPayload = {
 export async function verifySupabaseJwt(token: string): Promise<SupabaseJwtPayload> {
   if (!token) throw new AppError("Missing bearer token", 401);
 
-  const secret = createSecretKey(Buffer.from(env.SUPABASE_JWT_SECRET, "utf8"));
-  const verified = await jwtVerify(token, secret, { algorithms: ["HS256"] });
-  const payload = verified.payload as unknown as SupabaseJwtPayload;
+  const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false,
+    },
+  });
 
-  if (!payload?.sub) {
-    throw new AppError("Invalid JWT payload", 401);
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser(token);
+
+  if (error || !user?.id) {
+    throw new AppError("Invalid or expired bearer token", 401, "UNAUTHENTICATED");
   }
 
-  return payload;
+  return {
+    sub: user.id,
+    email: user.email,
+  };
 }
