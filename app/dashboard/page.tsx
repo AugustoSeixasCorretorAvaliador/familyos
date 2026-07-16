@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { MainNav } from "@/app/components/main-nav";
 import { bootstrapSeixasFamily } from "@/app/dashboard/actions";
@@ -369,15 +370,28 @@ export default async function DashboardPage() {
   return (
     <main className="min-h-screen bg-slate-50 p-6 md:p-10">
       <div className="mx-auto max-w-6xl space-y-6">
-        <header className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-4">
-            <MainNav current="dashboard" />
+        <header className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 bg-gradient-to-br from-white via-blue-50/40 to-violet-50/50 px-4 py-3 sm:px-6">
+            <Image
+              src="/brand/hero-familyos-horizontal.png"
+              alt="HERO.FamilyOS — O Sistema Operacional da Família"
+              width={1774}
+              height={887}
+              priority
+              sizes="(max-width: 768px) 100vw, 960px"
+              className="mx-auto h-auto max-h-56 w-full object-contain"
+            />
           </div>
-          <p className="text-sm text-slate-500 capitalize">{formatToday()}</p>
-          <h1 className="mt-2 text-2xl md:text-3xl font-semibold text-slate-900">
-            Bom dia, {fullName}.
-          </h1>
-          <p className="mt-1 text-slate-600">{family?.name ?? "Sem familia vinculada"}</p>
+          <div className="p-6">
+            <div className="mb-5">
+              <MainNav current="dashboard" />
+            </div>
+            <p className="text-sm capitalize text-slate-500">{formatToday()}</p>
+            <h1 className="mt-2 text-2xl font-semibold text-slate-900 md:text-3xl">
+              Bom dia, {fullName}.
+            </h1>
+            <p className="mt-1 text-slate-600">{family?.name ?? "Sem familia vinculada"}</p>
+          </div>
         </header>
 
         {!familyId && (

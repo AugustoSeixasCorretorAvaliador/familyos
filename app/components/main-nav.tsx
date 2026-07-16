@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 type MainNavProps = {
@@ -31,27 +32,47 @@ const items: Array<{ key: MainNavProps["current"]; label: string; href?: string 
 
 export function MainNav({ current }: MainNavProps) {
   return (
-    <nav className="flex flex-wrap gap-x-3 gap-y-2 text-sm">
-      {items.map((item) => {
-        const isCurrent = current === item.key;
-        if (!item.href) {
-          return (
-            <span key={item.key} className="text-slate-400">
-              {item.label}
-            </span>
-          );
-        }
+    <nav aria-label="Navegação principal" className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <Link href="/dashboard" className="inline-flex w-fit items-center gap-2.5" aria-label="HERO.FamilyOS — Dashboard">
+        <Image
+          src="/brand/hero-familyos-symbol.png"
+          alt=""
+          width={193}
+          height={234}
+          className="h-10 w-10 rounded-lg object-contain"
+        />
+        <span className="text-base font-bold tracking-tight text-[#061638]">
+          HERO.<span className="bg-gradient-to-r from-[#0877e8] to-[#7c31dc] bg-clip-text text-transparent">FamilyOS</span>
+        </span>
+      </Link>
 
-        return (
-          <Link
-            key={item.key}
-            href={item.href}
-            className={isCurrent ? "text-slate-900 font-medium" : "text-slate-600 hover:text-slate-900"}
-          >
-            {item.label}
-          </Link>
-        );
-      })}
+      <div className="flex flex-wrap gap-x-3 gap-y-2 text-sm">
+        {items.map((item) => {
+          const isCurrent = current === item.key;
+          if (!item.href) {
+            return (
+              <span key={item.key} className="text-slate-400">
+                {item.label}
+              </span>
+            );
+          }
+
+          return (
+            <Link
+              key={item.key}
+              href={item.href}
+              aria-current={isCurrent ? "page" : undefined}
+              className={
+                isCurrent
+                  ? "font-semibold text-[#075fc7]"
+                  : "text-slate-600 transition-colors hover:text-[#075fc7]"
+              }
+            >
+              {item.label}
+            </Link>
+          );
+        })}
+      </div>
     </nav>
   );
 }

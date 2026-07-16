@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
@@ -39,14 +40,25 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
-        <h1 className="text-2xl font-semibold text-slate-900">FamilyOS</h1>
-        <p className="mt-2 text-slate-600">Entre para acessar seu dashboard familiar.</p>
+    <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_#eaf4ff_0,_#f8fafc_42%,_#f8fafc_100%)] p-6">
+      <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-blue-100 bg-white shadow-xl shadow-blue-950/10">
+        <div className="border-b border-slate-100 bg-gradient-to-br from-white via-blue-50/40 to-violet-50/40 px-6 py-4">
+          <Image
+            src="/brand/hero-familyos-horizontal.png"
+            alt="HERO.FamilyOS — O Sistema Operacional da Família"
+            width={1774}
+            height={887}
+            priority
+            className="h-auto w-full object-contain"
+          />
+        </div>
+        <div className="p-8">
+          <h1 className="text-2xl font-semibold text-slate-900">Sua família, organizada e protegida.</h1>
+          <p className="mt-2 text-slate-600">Entre para acessar o sistema operacional da sua família.</p>
 
         <button
           onClick={handleGoogleLogin}
-          className="mt-8 w-full rounded-xl bg-slate-900 text-white py-3 px-4 font-medium hover:bg-slate-800 transition-colors"
+          className="mt-8 w-full rounded-xl bg-gradient-to-r from-[#075fc7] to-[#7137d5] px-4 py-3 font-medium text-white shadow-lg shadow-blue-900/15 transition-all hover:brightness-105"
         >
           Entrar com Google
         </button>
@@ -60,6 +72,7 @@ export default function LoginPage() {
             {errorMessage}
           </p>
         )}
+        </div>
       </div>
     </main>
   );
