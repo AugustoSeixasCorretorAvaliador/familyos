@@ -1,4 +1,3 @@
-import { PDFParse } from "pdf-parse";
 import type { OCRInput, OCRProvider, OCRResult } from "@/lib/ocr/types";
 
 type GoogleVisionBatchResponse = {
@@ -32,6 +31,7 @@ export class GoogleVisionOCRProvider implements OCRProvider {
 
     // Lightweight fallback for digital PDFs so OCR layer can still process PDFs.
     if (input.mimeType === "application/pdf") {
+      const { PDFParse } = await import("pdf-parse");
       const parser = new PDFParse({ data: input.bytes });
       const parsed = await parser.getText();
       await parser.destroy();
