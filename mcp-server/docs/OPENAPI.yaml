@@ -1,0 +1,58 @@
+openapi: 3.1.0
+info:
+  title: FamilyOS MCP Companion API
+  version: 1.0.0
+  description: |
+    Optional companion HTTP contract for health/audit in MCP deployments.
+servers:
+  - url: http://localhost:8080
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  checks:
+                    type: object
+  /audit:
+    get:
+      summary: Protected audit query
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Audit rows for the authenticated admin family
+        "401":
+          description: Unauthenticated
+        "403":
+          description: Missing audit capability or non-admin family role
+  /audit/{id}:
+    get:
+      summary: Protected audit detail
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: One audit row for the authenticated admin family
+        "404":
+          description: Not found
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
