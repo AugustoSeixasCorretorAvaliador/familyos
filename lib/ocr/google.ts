@@ -1,4 +1,5 @@
 import type { OCRInput, OCRProvider, OCRResult } from "@/lib/ocr/types";
+import { parseDocumentText } from "@/lib/document-parser/parser";
 
 type GoogleVisionBatchResponse = {
   responses?: Array<{
@@ -26,7 +27,7 @@ function average(values: number[]) {
 export class GoogleVisionOCRProvider implements OCRProvider {
   readonly name = "google_vision";
 
-  async extractText(input: OCRInput): Promise<OCRResult> {
+  async process(input: OCRInput): Promise<OCRResult> {
     const startedAt = Date.now();
 
     // Lightweight fallback for digital PDFs so OCR layer can still process PDFs.
@@ -35,11 +36,20 @@ export class GoogleVisionOCRProvider implements OCRProvider {
       const parser = new PDFParse({ data: input.bytes });
       const parsed = await parser.getText();
       await parser.destroy();
+      const rawText = parsed.text?.trim() ?? "";
+      const suggestion = parseDocumentText(rawText);
       return {
         provider: this.name,
-        text: parsed.text?.trim() ?? "",
-        confidence: parsed.text?.trim() ? 0.88 : 0.0,
+        model: "pdf-parse",
+        rawText,
+        suggestion,
+        confidence: rawText ? 0.88 : 0.0,
+        confidenceKind: "rule_estimate",
+        warnings: rawText ? [] : ["PDF sem camada de texto legivel."],
+        requiresHumanReview: true,
         durationMs: Date.now() - startedAt,
+        requestId: null,
+        extractedFieldsCount: Object.keys(suggestion.fields).length,
       };
     }
 
@@ -89,11 +99,19 @@ export class GoogleVisionOCRProvider implements OCRProvider {
       .map((page) => page.confidence)
       .filter((value): value is number => typeof value === "number");
 
+    const suggestion = parseDocumentText(text);
     return {
       provider: this.name,
-      text,
+      model: "google-vision-document-text-detection",
+      rawText: text,
+      suggestion,
       confidence: pageConfidences.length > 0 ? average(pageConfidences) : text ? 0.85 : 0,
+      confidenceKind: "provider",
+      warnings: text ? [] : ["Google Vision nao retornou texto legivel."],
+      requiresHumanReview: true,
       durationMs: Date.now() - startedAt,
+      requestId: null,
+      extractedFieldsCount: Object.keys(suggestion.fields).length,
     };
   }
 }

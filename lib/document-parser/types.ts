@@ -8,7 +8,12 @@ export type SupportedDocumentType =
   | "Certidao de Casamento"
   | "Escritura"
   | "Matricula de Imovel"
+  | "IPTU"
   | "Contrato"
+  | "Procuracao"
+  | "Laudo Medico"
+  | "Receita"
+  | "Exame"
   | "Documento Generico";
 
 export type DocumentSuggestionFields = {
@@ -25,8 +30,11 @@ export type DocumentSuggestionFields = {
   cartorio?: string;
   data_emissao?: string;
   data_validade?: string;
+  data_nascimento?: string;
+  nacionalidade?: string;
   naturalidade?: string;
   filiacao?: string;
+  valor_monetario?: string;
   observacoes?: string;
 };
 

@@ -3,12 +3,15 @@ import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { MainNav } from "@/app/components/main-nav";
 import { confirmDocumentReview, processDocumentOCR, rejectDocumentReview } from "@/app/documentos/actions";
+import { OcrSubmitButton } from "@/app/documentos/[id]/revisar/ocr-submit-button";
 import { getFamilyContext } from "@/lib/family/context";
+import { getOcrConfig } from "@/lib/ocr/config";
+import { getOcrPublicMessage } from "@/lib/ocr/errors";
 import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
   params: { id: string };
-  searchParams: { success?: string; error?: string };
+  searchParams: { success?: string; error?: string; warning?: string; reason?: string };
 };
 
 type DocumentRow = {
@@ -21,6 +24,7 @@ type DocumentRow = {
   issue_date: string | null;
   expiration_date: string | null;
   processing_status: string;
+  ocr_provider: string | null;
   ocr_confidence: number | null;
   review_required: boolean;
   metadata: Record<string, unknown> | null;
@@ -40,6 +44,9 @@ type OCRJobRow = {
   confidence: number | null;
   duration_ms: number | null;
   error_message: string | null;
+  suggestion_json: Record<string, unknown> | null;
+  started_at: string | null;
+  finished_at: string | null;
   created_at: string;
 };
 
@@ -57,8 +64,11 @@ const FIELD_LABELS: Array<{ key: string; label: string }> = [
   { key: "cartorio", label: "Cartorio" },
   { key: "data_emissao", label: "Data emissao" },
   { key: "data_validade", label: "Data validade" },
+  { key: "data_nascimento", label: "Data nascimento" },
+  { key: "nacionalidade", label: "Nacionalidade" },
   { key: "naturalidade", label: "Naturalidade" },
   { key: "filiacao", label: "Filiacao" },
+  { key: "valor_monetario", label: "Valor monetario" },
   { key: "observacoes", label: "Observacoes" },
 ];
 
@@ -77,6 +87,41 @@ function valueString(value: unknown) {
   return "";
 }
 
+type OcrHistoryMetadata = {
+  attempt?: number;
+  model?: string | null;
+  request_id?: string | null;
+  error_code?: string | null;
+  extracted_fields_count?: number;
+  warning_count?: number;
+  confidence_kind?: string;
+};
+
+function historyMetadata(value: Record<string, unknown> | null): OcrHistoryMetadata {
+  const meta = value?.ocr_meta;
+  return meta && typeof meta === "object" && !Array.isArray(meta)
+    ? (meta as OcrHistoryMetadata)
+    : {};
+}
+
+function feedbackMessage(searchParams: PageProps["searchParams"], provider: string | null) {
+  if (searchParams.warning === "ocr_failed" || searchParams.error === "ocr_failed") {
+    return getOcrPublicMessage(searchParams.reason);
+  }
+  if (searchParams.success === "ocr_done") {
+    return provider === "openai"
+      ? "OCR concluido pela OpenAI. Confira os campos sugeridos antes de salvar."
+      : "OCR concluido. Confira os campos sugeridos antes de salvar.";
+  }
+  if (searchParams.success === "manual" || searchParams.success === "uploaded_manual") {
+    return "Documento salvo para preenchimento e revisao manual.";
+  }
+  if (searchParams.success === "uploaded_ocr") {
+    return "Documento salvo e OCR concluido. Confira os campos sugeridos antes de salvar.";
+  }
+  return searchParams.success ? "Operacao concluida com sucesso." : null;
+}
+
 export default async function RevisarDocumentoPage({ params, searchParams }: PageProps) {
   const { user, family } = await getFamilyContext();
   const supabase = createClient();
@@ -87,7 +132,7 @@ export default async function RevisarDocumentoPage({ params, searchParams }: Pag
   const [{ data: document }, { data: metadata }, { data: jobs }] = await Promise.all([
     supabase
       .from("documents")
-      .select("id, title, document_type, document_number, issuing_authority, country, issue_date, expiration_date, processing_status, ocr_confidence, review_required, metadata")
+      .select("id, title, document_type, document_number, issuing_authority, country, issue_date, expiration_date, processing_status, ocr_provider, ocr_confidence, review_required, metadata")
       .eq("id", params.id)
       .eq("family_id", family.id)
       .maybeSingle(),
@@ -99,7 +144,7 @@ export default async function RevisarDocumentoPage({ params, searchParams }: Pag
       .maybeSingle(),
     supabase
       .from("document_ocr_jobs")
-      .select("id, provider, status, confidence, duration_ms, error_message, created_at")
+      .select("id, provider, status, confidence, duration_ms, error_message, suggestion_json, started_at, finished_at, created_at")
       .eq("document_id", params.id)
       .eq("family_id", family.id)
       .order("created_at", { ascending: false })
@@ -116,6 +161,10 @@ export default async function RevisarDocumentoPage({ params, searchParams }: Pag
 
   const interpretedFields = parsed?.interpreted_fields ?? {};
   const confidenceByField = parsed?.confidence_by_field ?? {};
+  const { reviewThreshold } = getOcrConfig();
+  const feedback = feedbackMessage(searchParams, doc.ocr_provider);
+  const hasOcrWarning = searchParams.warning === "ocr_failed" || searchParams.error === "ocr_failed";
+  const isProcessing = doc.processing_status === "OCR em processamento";
 
   return (
     <main className="min-h-screen bg-slate-50 p-6 md:p-10">
@@ -134,17 +183,15 @@ export default async function RevisarDocumentoPage({ params, searchParams }: Pag
           </div>
         </header>
 
-        {(searchParams.success || searchParams.error) && (
+        {feedback && (
           <section
             className={`rounded-2xl border p-4 shadow-sm ${
-              searchParams.error
-                ? "border-red-200 bg-red-50 text-red-700"
+              hasOcrWarning
+                ? "border-amber-200 bg-amber-50 text-amber-800"
                 : "border-emerald-200 bg-emerald-50 text-emerald-700"
             }`}
           >
-            {searchParams.error
-              ? "Nao foi possivel concluir a operacao deste documento."
-              : "Operacao concluida com sucesso."}
+            {feedback}
           </section>
         )}
 
@@ -156,12 +203,7 @@ export default async function RevisarDocumentoPage({ params, searchParams }: Pag
             </div>
             <form action={processDocumentOCR} className="mt-4">
               <input type="hidden" name="document_id" value={doc.id} />
-              <button
-                type="submit"
-                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-              >
-                Reprocessar OCR
-              </button>
+              <OcrSubmitButton processing={isProcessing} />
             </form>
 
             {latestJobs.length > 0 && (
@@ -170,10 +212,34 @@ export default async function RevisarDocumentoPage({ params, searchParams }: Pag
                 <ul className="mt-3 space-y-2 text-sm text-slate-700">
                   {latestJobs.map((job) => (
                     <li key={job.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                      {job.provider} - {job.status}
-                      {job.confidence !== null ? ` - ${Math.round(job.confidence)}%` : ""}
-                      {job.duration_ms ? ` - ${job.duration_ms}ms` : ""}
-                      {job.error_message ? ` - ${job.error_message}` : ""}
+                      {(() => {
+                        const meta = historyMetadata(job.suggestion_json);
+                        return (
+                          <>
+                            <p className="font-medium">
+                              {job.provider} - {job.status}
+                              {job.confidence !== null ? ` - ${Math.round(job.confidence)}%` : ""}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {meta.model ? `Modelo: ${meta.model} · ` : ""}
+                              {meta.attempt ? `Tentativa: ${meta.attempt} · ` : ""}
+                              {`Inicio: ${new Date(job.started_at ?? job.created_at).toLocaleString("pt-BR")}`}
+                              {job.duration_ms !== null ? ` · Duracao: ${job.duration_ms}ms` : ""}
+                              {typeof meta.extracted_fields_count === "number"
+                                ? ` · Campos: ${meta.extracted_fields_count}`
+                                : ""}
+                              {typeof meta.warning_count === "number"
+                                ? ` · Avisos: ${meta.warning_count}`
+                                : ""}
+                              {meta.request_id ? ` · Request: ${meta.request_id}` : ""}
+                              {meta.error_code ? ` · Codigo: ${meta.error_code}` : ""}
+                            </p>
+                            {job.error_message ? (
+                              <p className="mt-1 text-xs text-amber-700">{job.error_message}</p>
+                            ) : null}
+                          </>
+                        );
+                      })()}
                     </li>
                   ))}
                 </ul>
@@ -184,7 +250,8 @@ export default async function RevisarDocumentoPage({ params, searchParams }: Pag
           <article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Campos sugeridos</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Campos abaixo de 80% de confianca aparecem destacados para conferencia humana.
+              Campos abaixo de {Math.round(reviewThreshold * 100)}% de confianca estimada aparecem
+              destacados para conferencia humana.
             </p>
 
             <form action={confirmDocumentReview} className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -230,7 +297,8 @@ export default async function RevisarDocumentoPage({ params, searchParams }: Pag
 
               {FIELD_LABELS.map((field) => {
                 const confidence = confidenceValue(confidenceByField[field.key]);
-                const lowConfidence = confidence !== null && confidence < 80;
+                const lowConfidence =
+                  confidence !== null && confidence < Math.round(reviewThreshold * 100);
 
                 return (
                   <div key={field.key} className={`space-y-1 ${field.key === "observacoes" ? "md:col-span-2" : ""}`}>

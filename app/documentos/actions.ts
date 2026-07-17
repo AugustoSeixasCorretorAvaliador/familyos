@@ -3,16 +3,19 @@
 import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { getDocumentInterpreter } from "@/lib/ai-document-interpreter/interpreter";
 import { errorRedirectPath, reportActionError } from "@/lib/action-error";
 import type { ActionErrorCode } from "@/lib/action-feedback";
 import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
+import { getOcrConfig } from "@/lib/ocr/config";
+import {
+  OcrOperationalError,
+  toOcrOperationalError,
+} from "@/lib/ocr/errors";
 import { getOCRProvider } from "@/lib/ocr/provider";
 import { createClient } from "@/lib/supabase/server";
 import { logTimelineEvent } from "@/lib/timeline/log-event";
 
 const BUCKET = "family-documents";
-const MAX_UPLOAD_SIZE = 20 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
   "image/png",
@@ -212,33 +215,37 @@ async function createDocumentAlerts(input: {
 
 async function processDocumentPipeline(params: { familyId: string; documentId: string }) {
   const supabase = createClient();
+  const config = getOcrConfig();
 
   const { data: document } = await supabase
     .from("documents")
-    .select("id, storage_path, file_name, mime_type")
+    .select("id, storage_path, file_name, mime_type, document_type, processing_status")
     .eq("id", params.documentId)
     .eq("family_id", params.familyId)
     .maybeSingle();
 
   if (!document?.storage_path || document.storage_path === "pending") {
-    return { ok: false as const, error: new Error("document_file_not_found") };
+    return {
+      ok: false as const,
+      error: new OcrOperationalError("provider_unavailable"),
+    };
   }
 
   const provider = getOCRProvider();
+  if (provider.name === "manual") {
+    await supabase
+      .from("documents")
+      .update({
+        ocr_provider: provider.name,
+        last_ocr_error: null,
+      })
+      .eq("id", params.documentId)
+      .eq("family_id", params.familyId);
+    return { ok: true as const, outcome: "manual" as const };
+  }
 
-  const { data: job } = await supabase
-    .from("document_ocr_jobs")
-    .insert({
-      family_id: params.familyId,
-      document_id: params.documentId,
-      provider: provider.name,
-      status: "processing",
-      started_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-
-  await supabase
+  const previousStatus = document.processing_status;
+  const { data: lockedDocument, error: lockError } = await supabase
     .from("documents")
     .update({
       processing_status: DOCUMENT_STATUS.processing,
@@ -246,7 +253,65 @@ async function processDocumentPipeline(params: { familyId: string; documentId: s
       last_ocr_error: null,
     })
     .eq("id", params.documentId)
+    .eq("family_id", params.familyId)
+    .neq("processing_status", DOCUMENT_STATUS.processing)
+    .select("id")
+    .maybeSingle();
+
+  if (lockError) {
+    return {
+      ok: false as const,
+      error: new OcrOperationalError("provider_unavailable", { retryable: true }),
+    };
+  }
+  if (!lockedDocument) {
+    return {
+      ok: false as const,
+      error: new OcrOperationalError("already_processing"),
+    };
+  }
+
+  const { count: previousAttempts } = await supabase
+    .from("document_ocr_jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("document_id", params.documentId)
     .eq("family_id", params.familyId);
+  const attempt = (previousAttempts ?? 0) + 1;
+  const startedAt = new Date().toISOString();
+
+  const { data: job, error: jobError } = await supabase
+    .from("document_ocr_jobs")
+    .insert({
+      family_id: params.familyId,
+      document_id: params.documentId,
+      provider: provider.name,
+      status: "processing",
+      started_at: startedAt,
+      suggestion_json: {
+        ocr_meta: {
+          attempt,
+          model: provider.name === "openai" ? config.openAIModel : null,
+          confidence_kind: provider.name === "openai" ? "model_estimate" : "provider",
+        },
+      },
+    })
+    .select("id")
+    .single();
+
+  if (jobError || !job) {
+    await supabase
+      .from("documents")
+      .update({
+        processing_status: previousStatus,
+        last_ocr_error: null,
+      })
+      .eq("id", params.documentId)
+      .eq("family_id", params.familyId);
+    return {
+      ok: false as const,
+      error: new OcrOperationalError("provider_unavailable", { retryable: true }),
+    };
+  }
 
   await logTimelineEvent({
     familyId: params.familyId,
@@ -263,23 +328,32 @@ async function processDocumentPipeline(params: { familyId: string; documentId: s
     }
 
     const bytes = new Uint8Array(await downloaded.data.arrayBuffer());
-    const ocr = await provider.extractText({
+    if (bytes.byteLength > config.maxFileSizeBytes) {
+      throw new OcrOperationalError("file_too_large");
+    }
+
+    const ocr = await provider.process({
       fileName: document.file_name ?? `${params.documentId}.bin`,
       mimeType: document.mime_type ?? "application/octet-stream",
       bytes,
+      documentTypeHint: document.document_type,
     });
-
-    const interpreter = getDocumentInterpreter();
-    const interpreted = await interpreter.interpret({ rawText: ocr.text });
+    const interpretedFields = { ...ocr.suggestion.fields };
+    if (ocr.warnings.length > 0) {
+      const warningText = `Avisos OCR: ${ocr.warnings.join(" | ")}`;
+      interpretedFields.observacoes = interpretedFields.observacoes
+        ? `${interpretedFields.observacoes}\n${warningText}`
+        : warningText;
+    }
 
     await supabase.from("document_metadata").upsert(
       {
         family_id: params.familyId,
         document_id: params.documentId,
-        extracted_text: ocr.text,
-        interpreted_fields: interpreted.suggestion.fields,
-        confidence_by_field: interpreted.suggestion.confidenceByField,
-        overall_confidence: interpreted.suggestion.overallConfidence,
+        extracted_text: ocr.rawText,
+        interpreted_fields: interpretedFields,
+        confidence_by_field: ocr.suggestion.confidenceByField,
+        overall_confidence: ocr.suggestion.overallConfidence,
         needs_review: true,
         reviewed_by: null,
         reviewed_at: null,
@@ -291,7 +365,8 @@ async function processDocumentPipeline(params: { familyId: string; documentId: s
       .from("documents")
       .update({
         processing_status: DOCUMENT_STATUS.waitingReview,
-        ai_provider: interpreted.provider,
+        ai_provider: ocr.provider === "openai" ? "openai" : "rule_based_v1",
+        ocr_provider: ocr.provider,
         ocr_confidence: Number((ocr.confidence * 100).toFixed(2)),
         review_required: true,
         last_ocr_at: new Date().toISOString(),
@@ -307,8 +382,17 @@ async function processDocumentPipeline(params: { familyId: string; documentId: s
           status: "completed",
           confidence: Number((ocr.confidence * 100).toFixed(2)),
           duration_ms: ocr.durationMs,
-          extracted_text: ocr.text,
-          suggestion_json: interpreted.suggestion,
+          extracted_text: null,
+          suggestion_json: {
+            ocr_meta: {
+              attempt,
+              model: ocr.model,
+              request_id: ocr.requestId,
+              extracted_fields_count: ocr.extractedFieldsCount,
+              warning_count: ocr.warnings.length,
+              confidence_kind: ocr.confidenceKind,
+            },
+          },
           finished_at: new Date().toISOString(),
         })
         .eq("id", job.id)
@@ -322,14 +406,16 @@ async function processDocumentPipeline(params: { familyId: string; documentId: s
       affectedEntityId: params.documentId,
       source: "documentos.actions",
     });
-    return { ok: true as const };
+    return { ok: true as const, outcome: "completed" as const };
   } catch (error) {
+    const safeError = toOcrOperationalError(error);
+    const durationMs = Math.max(0, Date.now() - new Date(startedAt).getTime());
     await supabase
       .from("documents")
       .update({
         processing_status: DOCUMENT_STATUS.ocrError,
         review_required: true,
-        last_ocr_error: error instanceof Error ? error.message : "Erro OCR",
+        last_ocr_error: safeError.message,
       })
       .eq("id", params.documentId)
       .eq("family_id", params.familyId);
@@ -339,7 +425,18 @@ async function processDocumentPipeline(params: { familyId: string; documentId: s
         .from("document_ocr_jobs")
         .update({
           status: "failed",
-          error_message: error instanceof Error ? error.message : "Erro OCR",
+          duration_ms: durationMs,
+          error_message: `${safeError.code}: ${safeError.message}`,
+          extracted_text: null,
+          suggestion_json: {
+            ocr_meta: {
+              attempt,
+              model: provider.name === "openai" ? config.openAIModel : null,
+              request_id: safeError.requestId,
+              error_code: safeError.code,
+              extracted_fields_count: 0,
+            },
+          },
           finished_at: new Date().toISOString(),
         })
         .eq("id", job.id)
@@ -354,7 +451,7 @@ async function processDocumentPipeline(params: { familyId: string; documentId: s
       source: "documentos.actions",
       priority: "high",
     });
-    return { ok: false as const, error };
+    return { ok: false as const, error: safeError };
   }
 }
 
@@ -369,13 +466,24 @@ export async function processDocumentOCR(formData: FormData) {
 
   const result = await processDocumentPipeline({ familyId: family.id, documentId });
   if (!result.ok) {
-    failDocument(result.error, user.id, family.id, "process_ocr", "update_failed");
+    revalidatePath(`/documentos/${documentId}/revisar`);
+    revalidatePath("/documentos");
+    revalidatePath("/dashboard");
+    redirect(
+      `/documentos/${documentId}/revisar?error=ocr_failed&reason=${encodeURIComponent(
+        result.error.code
+      )}`
+    );
   }
 
   revalidatePath(`/documentos/${documentId}/revisar`);
   revalidatePath("/documentos");
   revalidatePath("/dashboard");
-  redirect(`/documentos/${documentId}/revisar?success=ocr_done`);
+  redirect(
+    `/documentos/${documentId}/revisar?success=${
+      result.outcome === "manual" ? "manual" : "ocr_done"
+    }`
+  );
 }
 
 export async function createDocument(formData: FormData) {
@@ -398,7 +506,7 @@ export async function createDocument(formData: FormData) {
   const file = formData.get("file");
 
   if (!title || !(file instanceof File) || file.size === 0) redirect("/documentos?error=required_fields");
-  if (file.size > MAX_UPLOAD_SIZE) redirect("/documentos?error=file_too_large");
+  if (file.size > getOcrConfig().maxFileSizeBytes) redirect("/documentos?error=file_too_large");
   if (!ALLOWED_MIME_TYPES.has(file.type)) redirect("/documentos?error=unsupported_file_type");
 
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -528,11 +636,22 @@ export async function createDocument(formData: FormData) {
     expirationDate,
   });
 
-  void processDocumentPipeline({ familyId: family.id, documentId });
+  const ocrResult = await processDocumentPipeline({ familyId: family.id, documentId });
 
   revalidatePath("/documentos");
   revalidatePath("/dashboard");
-  redirect(`/documentos/${documentId}/revisar?success=uploaded`);
+  if (!ocrResult.ok) {
+    redirect(
+      `/documentos/${documentId}/revisar?success=uploaded&warning=ocr_failed&reason=${encodeURIComponent(
+        ocrResult.error.code
+      )}`
+    );
+  }
+  redirect(
+    `/documentos/${documentId}/revisar?success=${
+      ocrResult.outcome === "manual" ? "uploaded_manual" : "uploaded_ocr"
+    }`
+  );
 }
 
 export async function confirmDocumentReview(formData: FormData) {
@@ -568,8 +687,13 @@ export async function confirmDocumentReview(formData: FormData) {
     cartorio: (formData.get("cartorio") as string | null)?.trim() || null,
     data_emissao: toDateOrNull((formData.get("data_emissao") as string | null) || null),
     data_validade: toDateOrNull((formData.get("data_validade") as string | null) || null),
+    data_nascimento: toDateOrNull(
+      (formData.get("data_nascimento") as string | null) || null
+    ),
+    nacionalidade: (formData.get("nacionalidade") as string | null)?.trim() || null,
     naturalidade: (formData.get("naturalidade") as string | null)?.trim() || null,
     filiacao: (formData.get("filiacao") as string | null)?.trim() || null,
+    valor_monetario: (formData.get("valor_monetario") as string | null)?.trim() || null,
     observacoes: (formData.get("observacoes") as string | null)?.trim() || null,
   };
 
@@ -699,7 +823,9 @@ export async function updateDocument(formData: FormData) {
   const maybeFile = formData.get("file");
 
   if (maybeFile instanceof File && maybeFile.size > 0) {
-    if (maybeFile.size > MAX_UPLOAD_SIZE) redirect("/documentos?error=file_too_large");
+    if (maybeFile.size > getOcrConfig().maxFileSizeBytes) {
+      redirect("/documentos?error=file_too_large");
+    }
     if (!ALLOWED_MIME_TYPES.has(maybeFile.type)) redirect("/documentos?error=unsupported_file_type");
 
     const normalizedType = normalizeDocumentType((formData.get("document_type") as string | null) ?? "Documento Generico");

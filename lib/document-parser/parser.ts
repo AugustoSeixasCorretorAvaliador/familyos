@@ -13,8 +13,8 @@ function detectType(text: string): SupportedDocumentType {
   const normalized = text.toLowerCase();
 
   if (normalized.includes("registro geral") || normalized.includes("carteira de identidade")) return "RG";
-  if (normalized.includes("cadastro de pessoa fisica") || normalized.includes("cpf")) return "CPF";
   if (normalized.includes("carteira nacional de habilitacao") || normalized.includes("cnh")) return "CNH";
+  if (normalized.includes("cadastro de pessoa fisica") || normalized.includes("cpf")) return "CPF";
   if (normalized.includes("republica federativa do brasil") && normalized.includes("passaporte")) {
     return "Passaporte Brasileiro";
   }
