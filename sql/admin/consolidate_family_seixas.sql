@@ -2,7 +2,7 @@
 --
 -- SAFETY GATES
 -- 1. Run sql/diagnostics/20260717_production_crud_schema_audit.sql.
--- 2. Export a logical backup with pg_dump and record its checksum externally.
+-- 2. Apply migration 20260717152559_create_family_consolidation_backups.sql.
 -- 3. Confirm the source family has no operational records or Storage objects.
 -- 4. Keep dry_run=true for the first execution. No mutation is committed then.
 --
@@ -19,12 +19,21 @@ declare
   storage_count bigint;
   source_memberships bigint;
   source_people bigint;
+  operational_counts jsonb := '{}'::jsonb;
+  backup_snapshot jsonb;
+  backup_id uuid;
+  backup_sha256 text;
 begin
   if source_family_id = target_family_id then
     raise exception 'source_and_target_must_differ';
   end if;
 
-  if not exists (select 1 from public.families where id = source_family_id) then
+  if not exists (
+    select 1
+    from public.families
+    where id = source_family_id
+      and deleted_at is null
+  ) then
     raise notice 'Source family already archived or absent; nothing to do.';
     return;
   end if;
@@ -49,6 +58,9 @@ begin
     )
     into source_count
     using source_family_id;
+
+    operational_counts := operational_counts
+      || jsonb_build_object(item.table_name, source_count);
 
     if source_count > 0 then
       raise exception using
@@ -89,9 +101,59 @@ begin
     source_memberships, source_people, storage_count;
 
   if dry_run then
-    raise notice 'DRY RUN: no rows changed. Set dry_run=false only after backup and review.';
+    raise notice 'DRY RUN: no rows changed. Set dry_run=false only after review.';
     return;
   end if;
+
+  backup_snapshot := jsonb_build_object(
+    'format_version', 1,
+    'captured_at', now(),
+    'source_family_id', source_family_id,
+    'target_family_id', target_family_id,
+    'family', (
+      select to_jsonb(f)
+      from public.families f
+      where f.id = source_family_id
+    ),
+    'family_members', coalesce((
+      select jsonb_agg(to_jsonb(fm) order by fm.id)
+      from public.family_members fm
+      where fm.family_id = source_family_id
+    ), '[]'::jsonb),
+    'people', coalesce((
+      select jsonb_agg(to_jsonb(p) order by p.id)
+      from public.people p
+      where p.family_id = source_family_id
+    ), '[]'::jsonb),
+    'events', coalesce((
+      select jsonb_agg(to_jsonb(e) order by e.id)
+      from public.events e
+      where e.family_id = source_family_id
+    ), '[]'::jsonb),
+    'operational_counts', operational_counts,
+    'storage_object_count', storage_count
+  );
+
+  backup_sha256 := encode(
+    extensions.digest(convert_to(backup_snapshot::text, 'UTF8'), 'sha256'),
+    'hex'
+  );
+
+  insert into private.family_consolidation_backups (
+    source_family_id,
+    target_family_id,
+    reason,
+    snapshot,
+    snapshot_sha256
+  )
+  values (
+    source_family_id,
+    target_family_id,
+    'Legacy duplicate Família Seixas archived after explicit owner authorization.',
+    backup_snapshot,
+    backup_sha256
+  )
+  returning id into backup_id;
 
   update public.family_members
   set status = 'revoked',
@@ -135,11 +197,14 @@ begin
       'source_family_id', source_family_id,
       'memberships', source_memberships,
       'people', source_people,
-      'storage_objects', storage_count
+      'storage_objects', storage_count,
+      'backup_id', backup_id,
+      'backup_sha256', backup_sha256
     ),
     jsonb_build_object(
       'target_family_id', target_family_id,
-      'source_archived', true
+      'source_archived', true,
+      'backup_id', backup_id
     ),
     now()
   );
@@ -152,5 +217,8 @@ begin
   ) then
     raise exception 'source_family_archive_postcondition_failed';
   end if;
+
+  raise notice 'Archived source family. backup_id=%, sha256=%',
+    backup_id, backup_sha256;
 end
 $consolidate$;
