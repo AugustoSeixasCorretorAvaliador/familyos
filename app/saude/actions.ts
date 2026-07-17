@@ -3,18 +3,40 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { getFamilyContext } from "@/lib/family/context";
+import type { ActionErrorCode } from "@/lib/action-feedback";
+import { errorRedirectPath, reportActionError } from "@/lib/action-error";
+import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 import { logTimelineEvent } from "@/lib/timeline/log-event";
 
 const EXAMS_BUCKET = "family-health";
+const MAX_EXAM_FILE_SIZE = 20 * 1024 * 1024;
+
+function failHealth(
+  error: unknown,
+  userId: string,
+  familyId: string,
+  action: string,
+  fallback: ActionErrorCode
+): never {
+  const result = reportActionError({
+    error,
+    userId,
+    familyId,
+    module: "saude",
+    action,
+    fallback,
+  });
+  redirect(errorRedirectPath("/saude", result));
+}
 
 function sanitizeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9_.-]/g, "_");
 }
 
 export async function createDoctor(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -36,7 +58,7 @@ export async function createDoctor(formData: FormData) {
     status: "active",
   });
 
-  if (error) redirect("/saude?error=create_failed");
+  if (error) failHealth(error, user.id, family.id, "create_doctor", "create_failed");
 
   await logTimelineEvent({
     familyId: family.id,
@@ -51,23 +73,41 @@ export async function createDoctor(formData: FormData) {
 }
 
 export async function deleteDoctor(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canAdminFamily(context)) redirect("/saude?error=permission_denied");
 
   const id = formData.get("id") as string | null;
   if (!id) redirect("/saude?error=missing_id");
 
-  await supabase.from("doctors").delete().eq("id", id).eq("family_id", family.id);
+  const { data, error } = await supabase
+    .from("doctors")
+    .delete()
+    .eq("id", id)
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    failHealth(
+      error ?? { code: "PGRST116", message: "doctor_not_found" },
+      user.id,
+      family.id,
+      "delete_doctor",
+      "delete_failed"
+    );
+  }
 
   revalidatePath("/saude");
   redirect("/saude?success=doctor_deleted");
 }
 
 export async function createMedication(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -90,7 +130,7 @@ export async function createMedication(formData: FormData) {
     notes: (formData.get("notes") as string | null)?.trim() || null,
   });
 
-  if (error) redirect("/saude?error=create_failed");
+  if (error) failHealth(error, user.id, family.id, "create_medication", "create_failed");
 
   await logTimelineEvent({
     familyId: family.id,
@@ -105,7 +145,8 @@ export async function createMedication(formData: FormData) {
 }
 
 export async function updateMedicationStatus(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -120,7 +161,22 @@ export async function updateMedicationStatus(formData: FormData) {
     payload.end_date = new Date().toISOString().slice(0, 10);
   }
 
-  await supabase.from("medications").update(payload).eq("id", id).eq("family_id", family.id);
+  const { data, error } = await supabase
+    .from("medications")
+    .update(payload)
+    .eq("id", id)
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    failHealth(
+      error ?? { code: "PGRST116", message: "medication_not_found" },
+      user.id,
+      family.id,
+      "update_medication",
+      "update_failed"
+    );
+  }
 
   revalidatePath("/saude");
   revalidatePath("/dashboard");
@@ -128,23 +184,41 @@ export async function updateMedicationStatus(formData: FormData) {
 }
 
 export async function deleteMedication(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canAdminFamily(context)) redirect("/saude?error=permission_denied");
 
   const id = formData.get("id") as string | null;
   if (!id) redirect("/saude?error=missing_id");
 
-  await supabase.from("medications").delete().eq("id", id).eq("family_id", family.id);
+  const { data, error } = await supabase
+    .from("medications")
+    .delete()
+    .eq("id", id)
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    failHealth(
+      error ?? { code: "PGRST116", message: "medication_not_found" },
+      user.id,
+      family.id,
+      "delete_medication",
+      "delete_failed"
+    );
+  }
 
   revalidatePath("/saude");
   redirect("/saude?success=med_deleted");
 }
 
 export async function createHealthExam(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -152,6 +226,12 @@ export async function createHealthExam(formData: FormData) {
 
   const examName = (formData.get("exam_name") as string | null)?.trim();
   if (!examName) redirect("/saude?error=required_fields");
+
+  const file = formData.get("file");
+  if (file instanceof File && file.size > 0) {
+    if (file.size > MAX_EXAM_FILE_SIZE) redirect("/saude?error=file_too_large");
+    if (file.type !== "application/pdf") redirect("/saude?error=unsupported_file_type");
+  }
 
   const { data: insertedExam, error: insertError } = await supabase
     .from("health_exams")
@@ -173,9 +253,16 @@ export async function createHealthExam(formData: FormData) {
     .select("id")
     .single();
 
-  if (insertError || !insertedExam) redirect("/saude?error=create_failed");
+  if (insertError || !insertedExam) {
+    failHealth(
+      insertError ?? new Error("exam_not_returned"),
+      user.id,
+      family.id,
+      "create_health_exam",
+      "create_failed"
+    );
+  }
 
-  const file = formData.get("file");
   if (file instanceof File && file.size > 0) {
     const fileName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(file.name)}`;
     const path = `${family.id}/${insertedExam.id}/${fileName}`;
@@ -188,14 +275,19 @@ export async function createHealthExam(formData: FormData) {
 
     if (uploadError) {
       await supabase.from("health_exams").delete().eq("id", insertedExam.id);
-      redirect("/saude?error=upload_failed");
+      failHealth(uploadError, user.id, family.id, "upload_health_exam", "storage_failed");
     }
 
-    await supabase
+    const { error: updateFileError } = await supabase
       .from("health_exams")
       .update({ file_path: path, file_name: file.name, mime_type: file.type || "application/pdf" })
       .eq("id", insertedExam.id)
       .eq("family_id", family.id);
+    if (updateFileError) {
+      await supabase.storage.from(EXAMS_BUCKET).remove([path]);
+      await supabase.from("health_exams").delete().eq("id", insertedExam.id);
+      failHealth(updateFileError, user.id, family.id, "link_health_exam_file", "update_failed");
+    }
   }
 
   await logTimelineEvent({
@@ -212,7 +304,8 @@ export async function createHealthExam(formData: FormData) {
 }
 
 export async function updateHealthExamStatus(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -222,7 +315,22 @@ export async function updateHealthExamStatus(formData: FormData) {
   const status = formData.get("status") as string | null;
   if (!id || !status) redirect("/saude?error=missing_id");
 
-  await supabase.from("health_exams").update({ status }).eq("id", id).eq("family_id", family.id);
+  const { data, error } = await supabase
+    .from("health_exams")
+    .update({ status })
+    .eq("id", id)
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    failHealth(
+      error ?? { code: "PGRST116", message: "health_exam_not_found" },
+      user.id,
+      family.id,
+      "update_health_exam",
+      "update_failed"
+    );
+  }
 
   if (status === "Realizado" || status === "Resultado recebido") {
     await logTimelineEvent({
@@ -240,11 +348,13 @@ export async function updateHealthExamStatus(formData: FormData) {
 }
 
 export async function deleteHealthExam(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canAdminFamily(context)) redirect("/saude?error=permission_denied");
 
   const id = formData.get("id") as string | null;
   if (!id) redirect("/saude?error=missing_id");
@@ -257,10 +367,28 @@ export async function deleteHealthExam(formData: FormData) {
     .maybeSingle();
 
   if (exam?.file_path) {
-    await supabase.storage.from(EXAMS_BUCKET).remove([exam.file_path]);
+    const { error: storageError } = await supabase.storage.from(EXAMS_BUCKET).remove([exam.file_path]);
+    if (storageError) {
+      failHealth(storageError, user.id, family.id, "delete_health_exam_file", "storage_failed");
+    }
   }
 
-  await supabase.from("health_exams").delete().eq("id", id).eq("family_id", family.id);
+  const { data, error } = await supabase
+    .from("health_exams")
+    .delete()
+    .eq("id", id)
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    failHealth(
+      error ?? { code: "PGRST116", message: "health_exam_not_found" },
+      user.id,
+      family.id,
+      "delete_health_exam",
+      "delete_failed"
+    );
+  }
 
   revalidatePath("/saude");
   revalidatePath("/dashboard");

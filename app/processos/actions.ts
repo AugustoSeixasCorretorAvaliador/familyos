@@ -2,19 +2,41 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { getFamilyContext } from "@/lib/family/context";
+import type { ActionErrorCode } from "@/lib/action-feedback";
+import { errorRedirectPath, reportActionError } from "@/lib/action-error";
+import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 import { logTimelineEvent } from "@/lib/timeline/log-event";
 
+function failLegalCase(
+  error: unknown,
+  userId: string,
+  familyId: string,
+  action: string,
+  fallback: ActionErrorCode
+): never {
+  const result = reportActionError({
+    error,
+    userId,
+    familyId,
+    module: "processos",
+    action,
+    fallback,
+  });
+  redirect(errorRedirectPath("/processos", result));
+}
+
 function toNumberOrNull(value: FormDataEntryValue | null) {
   if (!value || typeof value !== "string" || value.trim() === "") return null;
-  const normalized = value.replace(".", "").replace(",", ".");
+  const raw = value.trim();
+  const normalized = raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 export async function createLegalCase(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -44,7 +66,15 @@ export async function createLegalCase(formData: FormData) {
     .select("id")
     .single();
 
-  if (error || !inserted) redirect("/processos?error=create_failed");
+  if (error || !inserted) {
+    failLegalCase(
+      error ?? new Error("legal_case_not_returned"),
+      user.id,
+      family.id,
+      "create_legal_case",
+      "create_failed"
+    );
+  }
 
   await logTimelineEvent({
     familyId: family.id,
@@ -61,7 +91,8 @@ export async function createLegalCase(formData: FormData) {
 }
 
 export async function updateLegalCase(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -71,7 +102,7 @@ export async function updateLegalCase(formData: FormData) {
   const title = (formData.get("title") as string | null)?.trim();
   if (!id || !title) redirect("/processos?error=required_fields");
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("legal_cases")
     .update({
       case_number: (formData.get("case_number") as string | null)?.trim() || null,
@@ -89,9 +120,19 @@ export async function updateLegalCase(formData: FormData) {
       notes: (formData.get("notes") as string | null)?.trim() || null,
     })
     .eq("id", id)
-    .eq("family_id", family.id);
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
 
-  if (error) redirect("/processos?error=update_failed");
+  if (error || !data) {
+    failLegalCase(
+      error ?? { code: "PGRST116", message: "legal_case_not_found" },
+      user.id,
+      family.id,
+      "update_legal_case",
+      "update_failed"
+    );
+  }
 
   await logTimelineEvent({
     familyId: family.id,
@@ -108,16 +149,33 @@ export async function updateLegalCase(formData: FormData) {
 }
 
 export async function deleteLegalCase(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canAdminFamily(context)) redirect("/processos?error=permission_denied");
 
   const id = formData.get("id") as string | null;
   if (!id) redirect("/processos?error=missing_id");
 
-  await supabase.from("legal_cases").delete().eq("id", id).eq("family_id", family.id);
+  const { data, error } = await supabase
+    .from("legal_cases")
+    .delete()
+    .eq("id", id)
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    failLegalCase(
+      error ?? { code: "PGRST116", message: "legal_case_not_found" },
+      user.id,
+      family.id,
+      "delete_legal_case",
+      "delete_failed"
+    );
+  }
 
   await logTimelineEvent({
     familyId: family.id,

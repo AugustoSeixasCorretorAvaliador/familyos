@@ -2,14 +2,18 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { MainNav } from "@/app/components/main-nav";
+import { SubmitButton } from "@/app/components/submit-button";
 import { createDocument, deleteDocument, updateDocument } from "@/app/documentos/actions";
-import { getFamilyContext } from "@/lib/family/context";
+import { getActionErrorMessage } from "@/lib/action-feedback";
+import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
   searchParams: {
     success?: string;
     error?: string;
+    request_id?: string;
+    edit?: string;
   };
 };
 
@@ -83,7 +87,8 @@ function getDocValidityLabel(expirationDate: string | null) {
 }
 
 export default async function DocumentosPage({ searchParams }: PageProps) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -135,7 +140,7 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
             }`}
           >
             {searchParams.error
-              ? "Nao foi possivel concluir a operacao de documentos."
+              ? getActionErrorMessage(searchParams.error, searchParams.request_id)
               : "Operacao concluida com sucesso."}
           </section>
         )}
@@ -175,9 +180,11 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
             <p className="text-xs text-slate-500 md:col-span-2">Formatos: PDF, PNG, JPEG, WEBP, TIFF. Limite: 20MB.</p>
             <textarea name="observacoes" placeholder="Observacoes" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" rows={3} />
             <div className="md:col-span-2">
-              <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">
-                Salvar documento
-              </button>
+              <SubmitButton
+                label="Salvar documento"
+                pendingLabel="Enviando documento..."
+                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+              />
             </div>
           </form>
         </section>
@@ -189,7 +196,12 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
           ) : (
             <div className="mt-4 space-y-3">
               {documents.map((document) => (
-                <details key={document.id} className="rounded-xl border border-slate-200 p-4">
+                <details
+                  id={`document-${document.id}`}
+                  key={document.id}
+                  open={searchParams.edit === document.id}
+                  className="scroll-mt-6 rounded-xl border border-slate-200 p-4"
+                >
                   <summary className="cursor-pointer list-none flex items-center justify-between gap-4">
                     <div>
                       <p className="font-medium text-slate-900">{document.title}</p>
@@ -257,20 +269,23 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
                         rows={2}
                       />
                       <div className="md:col-span-2 flex gap-2">
-                        <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">
-                          Salvar alteracoes
-                        </button>
+                        <SubmitButton
+                          label="Salvar alteracoes"
+                          className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+                        />
                       </div>
                     </form>
 
-                    <form action={deleteDocument}>
-                      <input type="hidden" name="document_id" value={document.id} />
-                      <ConfirmSubmitButton
-                        label="Excluir documento"
-                        confirmMessage="Deseja realmente excluir este documento?"
-                        className="rounded-xl border border-red-300 text-red-700 px-4 py-2 text-sm font-medium hover:bg-red-50"
-                      />
-                    </form>
+                    {canAdminFamily(context) && (
+                      <form action={deleteDocument}>
+                        <input type="hidden" name="document_id" value={document.id} />
+                        <ConfirmSubmitButton
+                          label="Excluir documento"
+                          confirmMessage="Deseja realmente excluir este documento?"
+                          className="rounded-xl border border-red-300 text-red-700 px-4 py-2 text-sm font-medium hover:bg-red-50"
+                        />
+                      </form>
+                    )}
                   </div>
                 </details>
               ))}

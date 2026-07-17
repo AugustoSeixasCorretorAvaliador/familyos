@@ -1,7 +1,16 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { MainNav } from "@/app/components/main-nav";
-import { createProperty, deleteProperty, updateProperty } from "@/app/imoveis/actions";
+import { SubmitButton } from "@/app/components/submit-button";
+import {
+  createProperty,
+  createPropertyDocument,
+  deleteProperty,
+  deletePropertyDocument,
+  updateProperty,
+} from "@/app/imoveis/actions";
+import { getActionErrorMessage } from "@/lib/action-feedback";
 import { getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -10,6 +19,7 @@ type PageProps = {
     situacao?: string;
     success?: string;
     error?: string;
+    request_id?: string;
   };
 };
 
@@ -44,7 +54,30 @@ type PropertyRow = {
   }>;
 };
 
+type PropertyDocumentRow = {
+  id: string;
+  property_id: string;
+  title: string;
+  document_type: string;
+  file_name: string | null;
+  issue_date: string | null;
+  expiration_date: string | null;
+  processing_status: string;
+  created_at: string;
+};
+
 const SITUACOES = ["Proprio", "Alugado", "A venda", "Vendido", "Em aquisicao", "Vago"];
+const PROPERTY_DOCUMENT_TYPES = [
+  "RGI / Matricula",
+  "Escritura",
+  "IPTU",
+  "Corpo de Bombeiros",
+  "Laudemio",
+  "Planta",
+  "Convencao de Condominio",
+  "Seguro",
+  "Outro",
+];
 
 function toCurrency(value: unknown) {
   if (typeof value !== "number") return "-";
@@ -55,13 +88,13 @@ function toCurrency(value: unknown) {
 }
 
 export default async function ImoveisPage({ searchParams }: PageProps) {
-  const { user, family } = await getFamilyContext();
+  const { user, family, membership } = await getFamilyContext();
   const supabase = createClient();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
 
-  const [{ data: peopleData }, { data: propertiesData }] = await Promise.all([
+  const [{ data: peopleData }, { data: propertiesData }, { data: documentsData }] = await Promise.all([
     supabase
       .from("people")
       .select("id, first_name, last_name")
@@ -76,9 +109,20 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
       .eq("family_id", family.id)
       .is("deleted_at", null)
       .order("created_at", { ascending: false }),
+    supabase
+      .from("documents")
+      .select(
+        "id, property_id, title, document_type, file_name, issue_date, expiration_date, processing_status, created_at"
+      )
+      .eq("family_id", family.id)
+      .not("property_id", "is", null)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false }),
   ]);
 
   const people = (peopleData ?? []) as PersonOption[];
+  const propertyDocuments = (documentsData ?? []) as PropertyDocumentRow[];
+  const canAdmin = membership?.role === "owner" || membership?.role === "admin";
   let properties = ((propertiesData ?? []) as PropertyRow[]).map((property) => ({
     ...property,
     property_owners: property.property_owners.map((owner) => ({
@@ -121,7 +165,7 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
             }`}
           >
             {searchParams.error
-              ? "Nao foi possivel concluir a operacao. Verifique os dados e tente novamente."
+              ? getActionErrorMessage(searchParams.error, searchParams.request_id)
               : "Operacao realizada com sucesso."}
           </section>
         )}
@@ -159,9 +203,10 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
               </select>
             </div>
             <div className="md:col-span-2">
-              <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">
-                Salvar imovel
-              </button>
+              <SubmitButton
+                label="Salvar imovel"
+                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+              />
             </div>
           </form>
         </section>
@@ -195,6 +240,9 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                   .filter((owner): owner is { first_name: string; last_name: string } => !!owner)
                   .map((owner) => `${owner.first_name} ${owner.last_name}`)
                   .join(", ");
+                const documents = propertyDocuments.filter(
+                  (document) => document.property_id === property.id
+                );
 
                 return (
                   <details key={property.id} className="rounded-xl border border-slate-200 p-4">
@@ -254,20 +302,138 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                           </select>
                         </div>
                         <div className="md:col-span-2 flex gap-2">
-                          <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">
-                            Salvar alteracoes
-                          </button>
+                          <SubmitButton
+                            label="Salvar alteracoes"
+                            className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+                          />
                         </div>
                       </form>
 
-                      <form action={deleteProperty}>
-                        <input type="hidden" name="property_id" value={property.id} />
-                        <ConfirmSubmitButton
-                          label="Excluir imovel"
-                          confirmMessage="Deseja realmente excluir este imovel?"
-                          className="rounded-xl border border-red-300 text-red-700 px-4 py-2 text-sm font-medium hover:bg-red-50"
-                        />
-                      </form>
+                      <section className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4">
+                        <h3 className="font-medium text-slate-900">Documentos patrimoniais</h3>
+                        <p className="mt-1 text-sm text-slate-600">
+                          RGI, escritura, IPTU, bombeiros, laudemio, planta, convencao e seguro.
+                        </p>
+
+                        <form
+                          action={createPropertyDocument}
+                          className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2"
+                        >
+                          <input type="hidden" name="property_id" value={property.id} />
+                          <select
+                            name="document_type"
+                            required
+                            className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+                          >
+                            {PROPERTY_DOCUMENT_TYPES.map((type) => (
+                              <option key={type} value={type}>{type}</option>
+                            ))}
+                          </select>
+                          <input
+                            name="title"
+                            required
+                            placeholder="Titulo do documento"
+                            className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+                          />
+                          <label className="text-sm text-slate-600">
+                            Emissao
+                            <input
+                              name="issue_date"
+                              type="date"
+                              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
+                            />
+                          </label>
+                          <label className="text-sm text-slate-600">
+                            Validade
+                            <input
+                              name="expiration_date"
+                              type="date"
+                              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
+                            />
+                          </label>
+                          <input
+                            name="file"
+                            type="file"
+                            required
+                            accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,application/pdf,image/png,image/jpeg,image/webp,image/tiff"
+                            className="rounded-xl border border-slate-300 bg-white px-3 py-2 md:col-span-2"
+                          />
+                          <textarea
+                            name="observacoes"
+                            rows={2}
+                            placeholder="Observacoes"
+                            className="rounded-xl border border-slate-300 bg-white px-3 py-2 md:col-span-2"
+                          />
+                          <div className="md:col-span-2">
+                            <SubmitButton
+                              label="Enviar documento"
+                              pendingLabel="Enviando..."
+                              className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                            />
+                          </div>
+                        </form>
+
+                        {documents.length === 0 ? (
+                          <p className="mt-4 text-sm text-slate-500">Nenhum documento vinculado.</p>
+                        ) : (
+                          <div className="mt-4 space-y-2">
+                            {documents.map((document) => (
+                              <div
+                                key={document.id}
+                                className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between"
+                              >
+                                <div>
+                                  <p className="text-sm font-medium text-slate-900">{document.title}</p>
+                                  <p className="text-xs text-slate-500">
+                                    {document.document_type} · {document.processing_status}
+                                  </p>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  <Link
+                                    href={`/documentos/${document.id}/download`}
+                                    className="rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-medium text-blue-700"
+                                  >
+                                    Baixar
+                                  </Link>
+                                  <Link
+                                    href={`/documentos/${document.id}/revisar`}
+                                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700"
+                                  >
+                                    Revisar
+                                  </Link>
+                                  <Link
+                                    href={`/documentos?edit=${document.id}#document-${document.id}`}
+                                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700"
+                                  >
+                                    Substituir
+                                  </Link>
+                                  {canAdmin && (
+                                    <form action={deletePropertyDocument}>
+                                      <input type="hidden" name="document_id" value={document.id} />
+                                      <ConfirmSubmitButton
+                                        label="Excluir"
+                                        confirmMessage="Deseja excluir este documento patrimonial?"
+                                        className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700"
+                                      />
+                                    </form>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+
+                      {canAdmin && (
+                        <form action={deleteProperty}>
+                          <input type="hidden" name="property_id" value={property.id} />
+                          <ConfirmSubmitButton
+                            label="Excluir imovel"
+                            confirmMessage="Deseja realmente excluir este imovel?"
+                            className="rounded-xl border border-red-300 text-red-700 px-4 py-2 text-sm font-medium hover:bg-red-50"
+                          />
+                        </form>
+                      )}
                     </div>
                   </details>
                 );

@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { errorRedirectPath, reportActionError } from "@/lib/action-error";
 import { getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -15,12 +16,24 @@ export async function GET(
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  const { data: exam } = await supabase
+  const { data: exam, error: readError } = await supabase
     .from("health_exams")
     .select("file_path")
     .eq("id", params.id)
     .eq("family_id", family.id)
     .maybeSingle();
+
+  if (readError) {
+    const result = reportActionError({
+      error: readError,
+      userId: user.id,
+      familyId: family.id,
+      module: "saude",
+      action: "download_exam_read",
+      fallback: "read_failed",
+    });
+    return NextResponse.redirect(new URL(errorRedirectPath("/saude", result), request.url));
+  }
 
   if (!exam?.file_path) {
     return NextResponse.redirect(new URL("/saude?error=file_not_found", request.url));
@@ -29,7 +42,15 @@ export async function GET(
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(exam.file_path, 60);
 
   if (error || !data?.signedUrl) {
-    return NextResponse.redirect(new URL("/saude?error=signed_url_failed", request.url));
+    const result = reportActionError({
+      error: error ?? new Error("signed_url_missing"),
+      userId: user.id,
+      familyId: family.id,
+      module: "saude",
+      action: "download_exam_signed_url",
+      fallback: "signed_url_failed",
+    });
+    return NextResponse.redirect(new URL(errorRedirectPath("/saude", result), request.url));
   }
 
   return NextResponse.redirect(data.signedUrl);

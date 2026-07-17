@@ -2,12 +2,33 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { getFamilyContext } from "@/lib/family/context";
+import type { ActionErrorCode } from "@/lib/action-feedback";
+import { errorRedirectPath, reportActionError } from "@/lib/action-error";
+import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 import { logTimelineEvent } from "@/lib/timeline/log-event";
 
+function failTask(
+  error: unknown,
+  userId: string,
+  familyId: string,
+  action: string,
+  fallback: ActionErrorCode
+): never {
+  const result = reportActionError({
+    error,
+    userId,
+    familyId,
+    module: "tarefas",
+    action,
+    fallback,
+  });
+  redirect(errorRedirectPath("/tarefas", result));
+}
+
 export async function createTask(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -35,7 +56,15 @@ export async function createTask(formData: FormData) {
     .select("id")
     .single();
 
-  if (error || !inserted) redirect("/tarefas?error=create_failed");
+  if (error || !inserted) {
+    failTask(
+      error ?? new Error("task_not_returned"),
+      user.id,
+      family.id,
+      "create_task",
+      "create_failed"
+    );
+  }
 
   await logTimelineEvent({
     familyId: family.id,
@@ -52,7 +81,8 @@ export async function createTask(formData: FormData) {
 }
 
 export async function updateTask(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -66,7 +96,7 @@ export async function updateTask(formData: FormData) {
 
   const status = (formData.get("status") as string | null) || "A fazer";
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("family_tasks")
     .update({
       title,
@@ -83,9 +113,19 @@ export async function updateTask(formData: FormData) {
       completed_at: status === "Concluida" ? new Date().toISOString() : null,
     })
     .eq("id", id)
-    .eq("family_id", family.id);
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
 
-  if (error) redirect("/tarefas?error=update_failed");
+  if (error || !data) {
+    failTask(
+      error ?? { code: "PGRST116", message: "task_not_found" },
+      user.id,
+      family.id,
+      "update_task",
+      "update_failed"
+    );
+  }
 
   await logTimelineEvent({
     familyId: family.id,
@@ -102,7 +142,8 @@ export async function updateTask(formData: FormData) {
 }
 
 export async function toggleTaskStatus(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -114,14 +155,25 @@ export async function toggleTaskStatus(formData: FormData) {
 
   const status = action === "complete" ? "Concluida" : "Em andamento";
 
-  await supabase
+  const { data, error } = await supabase
     .from("family_tasks")
     .update({
       status,
       completed_at: action === "complete" ? new Date().toISOString() : null,
     })
     .eq("id", id)
-    .eq("family_id", family.id);
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    failTask(
+      error ?? { code: "PGRST116", message: "task_not_found" },
+      user.id,
+      family.id,
+      "toggle_task",
+      "update_failed"
+    );
+  }
 
   await logTimelineEvent({
     familyId: family.id,
@@ -138,16 +190,33 @@ export async function toggleTaskStatus(formData: FormData) {
 }
 
 export async function deleteTask(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canAdminFamily(context)) redirect("/tarefas?error=permission_denied");
 
   const id = formData.get("id") as string | null;
   if (!id) redirect("/tarefas?error=missing_id");
 
-  await supabase.from("family_tasks").delete().eq("id", id).eq("family_id", family.id);
+  const { data, error } = await supabase
+    .from("family_tasks")
+    .delete()
+    .eq("id", id)
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    failTask(
+      error ?? { code: "PGRST116", message: "task_not_found" },
+      user.id,
+      family.id,
+      "delete_task",
+      "delete_failed"
+    );
+  }
 
   await logTimelineEvent({
     familyId: family.id,

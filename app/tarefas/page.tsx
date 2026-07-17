@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { MainNav } from "@/app/components/main-nav";
+import { SubmitButton } from "@/app/components/submit-button";
 import { createTask, deleteTask, toggleTaskStatus, updateTask } from "@/app/tarefas/actions";
-import { getFamilyContext } from "@/lib/family/context";
+import { getActionErrorMessage } from "@/lib/action-feedback";
+import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
@@ -12,6 +14,7 @@ type PageProps = {
     responsible?: string;
     success?: string;
     error?: string;
+    request_id?: string;
   };
 };
 
@@ -58,7 +61,8 @@ function isOverdue(task: TaskRow) {
 }
 
 export default async function TarefasPage({ searchParams }: PageProps) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -134,7 +138,9 @@ export default async function TarefasPage({ searchParams }: PageProps) {
                 : "border-emerald-200 bg-emerald-50 text-emerald-700"
             }`}
           >
-            {searchParams.error ? "Nao foi possivel concluir a operacao." : "Operacao concluida com sucesso."}
+            {searchParams.error
+              ? getActionErrorMessage(searchParams.error, searchParams.request_id)
+              : "Operacao concluida com sucesso."}
           </section>
         )}
 
@@ -186,9 +192,10 @@ export default async function TarefasPage({ searchParams }: PageProps) {
             </select>
             <textarea name="description" rows={3} placeholder="Descricao" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
             <div className="md:col-span-2">
-              <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">
-                Salvar tarefa
-              </button>
+              <SubmitButton
+                label="Salvar tarefa"
+                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+              />
             </div>
           </form>
         </section>
@@ -287,7 +294,10 @@ export default async function TarefasPage({ searchParams }: PageProps) {
                       </select>
                       <textarea name="description" rows={2} defaultValue={task.description ?? ""} className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
                       <div className="md:col-span-2 flex flex-wrap gap-2">
-                        <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Salvar alteracoes</button>
+                        <SubmitButton
+                          label="Salvar alteracoes"
+                          className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+                        />
                       </div>
                     </form>
 
@@ -295,21 +305,31 @@ export default async function TarefasPage({ searchParams }: PageProps) {
                       <form action={toggleTaskStatus}>
                         <input type="hidden" name="id" value={task.id} />
                         <input type="hidden" name="action" value="complete" />
-                        <button type="submit" className="rounded-xl border border-emerald-300 text-emerald-700 px-3 py-1 text-sm hover:bg-emerald-50">Concluir</button>
+                        <SubmitButton
+                          label="Concluir"
+                          pendingLabel="Concluindo..."
+                          className="rounded-xl border border-emerald-300 text-emerald-700 px-3 py-1 text-sm hover:bg-emerald-50 disabled:opacity-60"
+                        />
                       </form>
                       <form action={toggleTaskStatus}>
                         <input type="hidden" name="id" value={task.id} />
                         <input type="hidden" name="action" value="reopen" />
-                        <button type="submit" className="rounded-xl border border-amber-300 text-amber-700 px-3 py-1 text-sm hover:bg-amber-50">Reabrir</button>
-                      </form>
-                      <form action={deleteTask}>
-                        <input type="hidden" name="id" value={task.id} />
-                        <ConfirmSubmitButton
-                          label="Excluir"
-                          confirmMessage="Deseja realmente excluir esta tarefa?"
-                          className="rounded-xl border border-red-300 text-red-700 px-3 py-1 text-sm hover:bg-red-50"
+                        <SubmitButton
+                          label="Reabrir"
+                          pendingLabel="Reabrindo..."
+                          className="rounded-xl border border-amber-300 text-amber-700 px-3 py-1 text-sm hover:bg-amber-50 disabled:opacity-60"
                         />
                       </form>
+                      {canAdminFamily(context) && (
+                        <form action={deleteTask}>
+                          <input type="hidden" name="id" value={task.id} />
+                          <ConfirmSubmitButton
+                            label="Excluir"
+                            confirmMessage="Deseja realmente excluir esta tarefa?"
+                            className="rounded-xl border border-red-300 text-red-700 px-3 py-1 text-sm hover:bg-red-50"
+                          />
+                        </form>
+                      )}
                     </div>
                   </div>
                 </details>

@@ -4,7 +4,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDocumentInterpreter } from "@/lib/ai-document-interpreter/interpreter";
-import { getFamilyContext } from "@/lib/family/context";
+import { errorRedirectPath, reportActionError } from "@/lib/action-error";
+import type { ActionErrorCode } from "@/lib/action-feedback";
+import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { getOCRProvider } from "@/lib/ocr/provider";
 import { createClient } from "@/lib/supabase/server";
 import { logTimelineEvent } from "@/lib/timeline/log-event";
@@ -33,6 +35,28 @@ type SimilarDocument = {
   id: string;
   version: number;
 };
+
+function failDocument(
+  error: unknown,
+  userId: string,
+  familyId: string,
+  action: string,
+  fallback: ActionErrorCode
+): never {
+  redirect(
+    errorRedirectPath(
+      "/documentos",
+      reportActionError({
+        error,
+        userId,
+        familyId,
+        module: "documentos",
+        action,
+        fallback,
+      })
+    )
+  );
+}
 
 function sanitizeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9_.-]/g, "_");
@@ -111,14 +135,7 @@ async function upsertVersion(params: {
 }) {
   const supabase = createClient();
 
-  await supabase
-    .from("document_versions")
-    .update({ is_current: false })
-    .eq("family_id", params.familyId)
-    .eq("document_id", params.documentId)
-    .eq("is_current", true);
-
-  await supabase.from("document_versions").insert({
+  const { error: insertError } = await supabase.from("document_versions").insert({
     family_id: params.familyId,
     document_id: params.documentId,
     version: params.version,
@@ -130,6 +147,16 @@ async function upsertVersion(params: {
     uploaded_at: new Date().toISOString(),
     is_current: true,
   });
+  if (insertError) throw insertError;
+
+  const { error: updateError } = await supabase
+    .from("document_versions")
+    .update({ is_current: false })
+    .eq("family_id", params.familyId)
+    .eq("document_id", params.documentId)
+    .neq("version", params.version)
+    .eq("is_current", true);
+  if (updateError) throw updateError;
 }
 
 async function createDocumentAlerts(input: {
@@ -193,7 +220,9 @@ async function processDocumentPipeline(params: { familyId: string; documentId: s
     .eq("family_id", params.familyId)
     .maybeSingle();
 
-  if (!document?.storage_path || document.storage_path === "pending") return;
+  if (!document?.storage_path || document.storage_path === "pending") {
+    return { ok: false as const, error: new Error("document_file_not_found") };
+  }
 
   const provider = getOCRProvider();
 
@@ -293,6 +322,7 @@ async function processDocumentPipeline(params: { familyId: string; documentId: s
       affectedEntityId: params.documentId,
       source: "documentos.actions",
     });
+    return { ok: true as const };
   } catch (error) {
     await supabase
       .from("documents")
@@ -324,6 +354,7 @@ async function processDocumentPipeline(params: { familyId: string; documentId: s
       source: "documentos.actions",
       priority: "high",
     });
+    return { ok: false as const, error };
   }
 }
 
@@ -336,7 +367,10 @@ export async function processDocumentOCR(formData: FormData) {
   const documentId = (formData.get("document_id") as string | null) || "";
   if (!documentId) redirect("/documentos?error=missing_id");
 
-  await processDocumentPipeline({ familyId: family.id, documentId });
+  const result = await processDocumentPipeline({ familyId: family.id, documentId });
+  if (!result.ok) {
+    failDocument(result.error, user.id, family.id, "process_ocr", "update_failed");
+  }
 
   revalidatePath(`/documentos/${documentId}/revisar`);
   revalidatePath("/documentos");
@@ -345,7 +379,8 @@ export async function processDocumentOCR(formData: FormData) {
 }
 
 export async function createDocument(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -380,7 +415,7 @@ export async function createDocument(formData: FormData) {
     contentType: file.type || "application/octet-stream",
     upsert: false,
   });
-  if (uploadError) redirect("/documentos?error=upload_failed");
+  if (uploadError) failDocument(uploadError, user.id, family.id, "upload", "storage_failed");
 
   const similar = await findSimilarDocument({
     familyId: family.id,
@@ -423,7 +458,10 @@ export async function createDocument(formData: FormData) {
       .eq("id", documentId)
       .eq("family_id", family.id);
 
-    if (error) redirect("/documentos?error=update_failed");
+    if (error) {
+      await supabase.storage.from(BUCKET).remove([storagePath]);
+      failDocument(error, user.id, family.id, "create_version", "update_failed");
+    }
   } else {
     const { data, error } = await supabase
       .from("documents")
@@ -452,21 +490,28 @@ export async function createDocument(formData: FormData) {
       .select("id, version")
       .single();
 
-    if (error || !data) redirect("/documentos?error=create_failed");
+    if (error || !data) {
+      await supabase.storage.from(BUCKET).remove([storagePath]);
+      failDocument(error ?? new Error("document_insert_returned_no_row"), user.id, family.id, "create", "create_failed");
+    }
     documentId = data.id;
     version = data.version ?? 1;
   }
 
-  await upsertVersion({
-    familyId: family.id,
-    documentId,
-    version,
-    storagePath,
-    fileName: file.name,
-    mimeType: file.type || "application/octet-stream",
-    uploadedBy: user.id,
-    fileHash,
-  });
+  try {
+    await upsertVersion({
+      familyId: family.id,
+      documentId,
+      version,
+      storagePath,
+      fileName: file.name,
+      mimeType: file.type || "application/octet-stream",
+      uploadedBy: user.id,
+      fileHash,
+    });
+  } catch (error) {
+    failDocument(error, user.id, family.id, "create_version_record", "create_failed");
+  }
 
   await logTimelineEvent({
     familyId: family.id,
@@ -491,7 +536,8 @@ export async function createDocument(formData: FormData) {
 }
 
 export async function confirmDocumentReview(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -545,9 +591,9 @@ export async function confirmDocumentReview(formData: FormData) {
     .eq("id", documentId)
     .eq("family_id", family.id);
 
-  if (error) redirect(`/documentos/${documentId}/revisar?error=confirm_failed`);
+  if (error) failDocument(error, user.id, family.id, "confirm_review", "confirm_failed");
 
-  await supabase.from("document_metadata").upsert(
+  const { error: metadataError } = await supabase.from("document_metadata").upsert(
     {
       family_id: family.id,
       document_id: documentId,
@@ -558,6 +604,9 @@ export async function confirmDocumentReview(formData: FormData) {
     },
     { onConflict: "document_id" }
   );
+  if (metadataError) {
+    failDocument(metadataError, user.id, family.id, "confirm_review_metadata", "confirm_failed");
+  }
 
   await createDocumentAlerts({ familyId: family.id, documentId, title, expirationDate });
 
@@ -576,7 +625,8 @@ export async function confirmDocumentReview(formData: FormData) {
 }
 
 export async function rejectDocumentReview(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -585,7 +635,7 @@ export async function rejectDocumentReview(formData: FormData) {
   const documentId = (formData.get("document_id") as string | null) || "";
   if (!documentId) redirect("/documentos?error=missing_id");
 
-  await supabase
+  const { data, error } = await supabase
     .from("documents")
     .update({
       processing_status: DOCUMENT_STATUS.rejected,
@@ -593,7 +643,18 @@ export async function rejectDocumentReview(formData: FormData) {
       last_ocr_error: "Documento rejeitado na revisao humana.",
     })
     .eq("id", documentId)
-    .eq("family_id", family.id);
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    failDocument(
+      error ?? { code: "PGRST116", message: "document_not_found" },
+      user.id,
+      family.id,
+      "reject_review",
+      "update_failed"
+    );
+  }
 
   await logTimelineEvent({
     familyId: family.id,
@@ -611,7 +672,8 @@ export async function rejectDocumentReview(formData: FormData) {
 }
 
 export async function updateDocument(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -620,17 +682,19 @@ export async function updateDocument(formData: FormData) {
   const documentId = (formData.get("document_id") as string | null) || "";
   if (!documentId) redirect("/documentos?error=missing_id");
 
-  const { data: existingDoc } = await supabase
+  const { data: existingDoc, error: readError } = await supabase
     .from("documents")
-    .select("id, storage_path, version")
+    .select("id, storage_path, version, property_id")
     .eq("id", documentId)
     .eq("family_id", family.id)
     .maybeSingle();
 
+  if (readError) failDocument(readError, user.id, family.id, "read_for_update", "read_failed");
   if (!existingDoc) redirect("/documentos?error=not_found");
 
   let storagePath = existingDoc.storage_path;
   let nextVersion = existingDoc.version ?? 1;
+  let uploadedNewVersion = false;
 
   const maybeFile = formData.get("file");
 
@@ -656,19 +720,25 @@ export async function updateDocument(formData: FormData) {
       upsert: false,
     });
 
-    if (uploadError) redirect("/documentos?error=upload_failed");
+    if (uploadError) failDocument(uploadError, user.id, family.id, "upload_version", "storage_failed");
 
     nextVersion = (existingDoc.version ?? 1) + 1;
-    await upsertVersion({
-      familyId: family.id,
-      documentId,
-      version: nextVersion,
-      storagePath,
-      fileName: maybeFile.name,
-      mimeType: maybeFile.type || "application/octet-stream",
-      uploadedBy: user.id,
-      fileHash,
-    });
+    try {
+      await upsertVersion({
+        familyId: family.id,
+        documentId,
+        version: nextVersion,
+        storagePath,
+        fileName: maybeFile.name,
+        mimeType: maybeFile.type || "application/octet-stream",
+        uploadedBy: user.id,
+        fileHash,
+      });
+      uploadedNewVersion = true;
+    } catch (error) {
+      await supabase.storage.from(BUCKET).remove([storagePath]);
+      failDocument(error, user.id, family.id, "update_version_record", "update_failed");
+    }
   }
 
   const { error } = await supabase
@@ -696,11 +766,28 @@ export async function updateDocument(formData: FormData) {
     .eq("id", documentId)
     .eq("family_id", family.id);
 
-  if (error) redirect("/documentos?error=update_failed");
+  if (error) {
+    if (uploadedNewVersion) {
+      await supabase
+        .from("document_versions")
+        .delete()
+        .eq("family_id", family.id)
+        .eq("document_id", documentId)
+        .eq("version", nextVersion);
+      await supabase
+        .from("document_versions")
+        .update({ is_current: true })
+        .eq("family_id", family.id)
+        .eq("document_id", documentId)
+        .eq("version", existingDoc.version ?? 1);
+      await supabase.storage.from(BUCKET).remove([storagePath]);
+    }
+    failDocument(error, user.id, family.id, "update", "update_failed");
+  }
 
   await logTimelineEvent({
     familyId: family.id,
-    eventType: "document_updated",
+    eventType: existingDoc.property_id ? "property_document_updated" : "document_updated",
     affectedEntityType: "documents",
     affectedEntityId: documentId,
     source: "documentos.actions",
@@ -711,39 +798,60 @@ export async function updateDocument(formData: FormData) {
   }
 
   revalidatePath("/documentos");
+  revalidatePath("/imoveis");
   revalidatePath("/dashboard");
   redirect("/documentos?success=updated");
 }
 
 export async function deleteDocument(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canAdminFamily(context)) redirect("/documentos?error=permission_denied");
 
   const documentId = (formData.get("document_id") as string | null) || "";
   if (!documentId) redirect("/documentos?error=missing_id");
 
-  const { data: document } = await supabase
+  const { data: document, error: readError } = await supabase
     .from("documents")
-    .select("storage_path")
+    .select("storage_path, property_id")
     .eq("id", documentId)
     .eq("family_id", family.id)
     .maybeSingle();
 
-  if (document?.storage_path && document.storage_path !== "pending") {
-    await supabase.storage.from(BUCKET).remove([document.storage_path]);
+  if (readError) failDocument(readError, user.id, family.id, "read_for_delete", "read_failed");
+  if (!document) redirect("/documentos?error=not_found");
+
+  const { data: deletedRows, error: deleteError } = await supabase
+    .from("documents")
+    .delete()
+    .eq("id", documentId)
+    .eq("family_id", family.id)
+    .select("id");
+  if (deleteError || deletedRows?.length !== 1) {
+    failDocument(deleteError ?? new Error("document_delete_returned_no_row"), user.id, family.id, "delete", "delete_failed");
   }
 
-  await supabase.from("document_metadata").delete().eq("family_id", family.id).eq("document_id", documentId);
-  await supabase.from("document_ocr_jobs").delete().eq("family_id", family.id).eq("document_id", documentId);
-  await supabase.from("document_versions").delete().eq("family_id", family.id).eq("document_id", documentId);
-  await supabase.from("documents").delete().eq("id", documentId).eq("family_id", family.id);
+  if (document.storage_path && document.storage_path !== "pending") {
+    const { error: storageError } = await supabase.storage.from(BUCKET).remove([document.storage_path]);
+    if (storageError) {
+      reportActionError({
+        error: storageError,
+        userId: user.id,
+        familyId: family.id,
+        module: "documentos",
+        action: "delete_storage_after_record",
+        fallback: "storage_failed",
+      });
+    }
+  }
 
   await logTimelineEvent({
     familyId: family.id,
-    eventType: "document_deleted",
+    eventType: document.property_id ? "property_document_deleted" : "document_deleted",
     affectedEntityType: "documents",
     affectedEntityId: documentId,
     source: "documentos.actions",
@@ -751,6 +859,7 @@ export async function deleteDocument(formData: FormData) {
   });
 
   revalidatePath("/documentos");
+  revalidatePath("/imoveis");
   revalidatePath("/dashboard");
   redirect("/documentos?success=deleted");
 }

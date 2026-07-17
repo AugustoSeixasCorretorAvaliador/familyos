@@ -2,18 +2,21 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { getFamilyContext } from "@/lib/family/context";
+import { errorRedirectPath, reportActionError } from "@/lib/action-error";
+import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 
 function toNumberOrNull(value: FormDataEntryValue | null) {
   if (!value || typeof value !== "string" || value.trim() === "") return null;
-  const normalized = value.replace(".", "").replace(",", ".");
+  const raw = value.trim();
+  const normalized = raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 export async function createAccount(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -45,7 +48,15 @@ export async function createAccount(formData: FormData) {
   });
 
   if (error) {
-    redirect("/financas?error=create_failed");
+    const result = reportActionError({
+      error,
+      userId: user.id,
+      familyId: family.id,
+      module: "financas",
+      action: "create_account",
+      fallback: "create_failed",
+    });
+    redirect(errorRedirectPath("/financas", result));
   }
 
   revalidatePath("/financas");
@@ -54,7 +65,8 @@ export async function createAccount(formData: FormData) {
 }
 
 export async function updateAccount(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -80,7 +92,7 @@ export async function updateAccount(formData: FormData) {
     observacoes: (formData.get("observacoes") as string | null)?.trim() || null,
   };
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("accounts")
     .update({
       owner_person_id: (formData.get("owner_person_id") as string | null) || null,
@@ -90,10 +102,20 @@ export async function updateAccount(formData: FormData) {
       metadata,
     })
     .eq("id", accountId)
-    .eq("family_id", family.id);
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
 
-  if (error) {
-    redirect("/financas?error=update_failed");
+  if (error || !data) {
+    const result = reportActionError({
+      error: error ?? { code: "PGRST116", message: "account_not_found" },
+      userId: user.id,
+      familyId: family.id,
+      module: "financas",
+      action: "update_account",
+      fallback: "update_failed",
+    });
+    redirect(errorRedirectPath("/financas", result));
   }
 
   revalidatePath("/financas");
@@ -102,18 +124,38 @@ export async function updateAccount(formData: FormData) {
 }
 
 export async function deleteAccount(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canAdminFamily(context)) redirect("/financas?error=permission_denied");
 
   const accountId = formData.get("account_id") as string | null;
   if (!accountId) {
     redirect("/financas?error=missing_id");
   }
 
-  await supabase.from("accounts").delete().eq("id", accountId).eq("family_id", family.id);
+  const { data, error } = await supabase
+    .from("accounts")
+    .delete()
+    .eq("id", accountId)
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+
+  if (error || !data) {
+    const result = reportActionError({
+      error: error ?? { code: "PGRST116", message: "account_not_found" },
+      userId: user.id,
+      familyId: family.id,
+      module: "financas",
+      action: "delete_account",
+      fallback: "delete_failed",
+    });
+    redirect(errorRedirectPath("/financas", result));
+  }
 
   revalidatePath("/financas");
   revalidatePath("/dashboard");
