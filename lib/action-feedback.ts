@@ -4,6 +4,8 @@ export type ActionErrorCode =
   | "invalid_file"
   | "file_too_large"
   | "unsupported_file_type"
+  | "too_many_files"
+  | "multiple_files_require_archive"
   | "permission_denied"
   | "schema_missing"
   | "schema_mismatch"
@@ -31,6 +33,9 @@ const ERROR_MESSAGES: Record<ActionErrorCode, string> = {
   invalid_file: "Selecione um arquivo valido.",
   file_too_large: "O arquivo excede o limite permitido.",
   unsupported_file_type: "O formato do arquivo nao e permitido.",
+  too_many_files: "Selecione no maximo 10 arquivos por envio.",
+  multiple_files_require_archive:
+    "Para enviar varios arquivos de uma vez, marque Somente arquivar no historico.",
   permission_denied: "A politica de seguranca nao permite esta operacao para o seu perfil.",
   schema_missing: "O modulo ainda nao foi aplicado ao banco de dados.",
   schema_mismatch: "A estrutura do modulo esta divergente do banco de dados.",
