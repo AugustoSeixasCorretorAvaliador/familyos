@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
+import { ExpandableCreateForm } from "@/app/components/expandable-create-form";
 import { MainNav } from "@/app/components/main-nav";
 import { SubmitButton } from "@/app/components/submit-button";
 import { createDocument, deleteDocument, updateDocument } from "@/app/documentos/actions";
@@ -145,9 +146,15 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
           </section>
         )}
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">Novo documento inteligente</h2>
-          <form action={createDocument} className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4" encType="multipart/form-data">
+        <ExpandableCreateForm
+          id="create-document"
+          title="Novo documento inteligente"
+          buttonLabel="NOVO DOCUMENTO"
+          submitAction={createDocument}
+          encType="multipart/form-data"
+          outcome={searchParams.error ? "error" : searchParams.success ? "success" : null}
+          formClassName="grid grid-cols-1 gap-4 md:grid-cols-2"
+        >
             <input name="title" required placeholder="Titulo" className="rounded-xl border border-slate-300 px-3 py-2" />
             <select name="document_type" required className="rounded-xl border border-slate-300 px-3 py-2">
               <option value="">Tipo</option>
@@ -186,8 +193,7 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
                 className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
               />
             </div>
-          </form>
-        </section>
+        </ExpandableCreateForm>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">Lista de documentos</h2>

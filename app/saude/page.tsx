@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
+import { ExpandableCreateForm } from "@/app/components/expandable-create-form";
 import { MainNav } from "@/app/components/main-nav";
 import { SubmitButton } from "@/app/components/submit-button";
 import {
@@ -168,7 +169,21 @@ export default async function SaudePage({ searchParams }: PageProps) {
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">Medicos</h2>
-          <form action={createDoctor} className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="mt-4">
+            <ExpandableCreateForm
+              id="create-doctor"
+              title="Cadastrar médico"
+              buttonLabel="NOVO MÉDICO"
+              submitAction={createDoctor}
+              outcome={
+                searchParams.error
+                  ? "error"
+                  : searchParams.success === "doctor_created"
+                    ? "success"
+                    : null
+              }
+              formClassName="grid grid-cols-1 gap-3 md:grid-cols-2"
+            >
             <select name="patient_person_id" className="rounded-xl border border-slate-300 px-3 py-2">
               <option value="">Paciente</option>
               {people.map((person) => (
@@ -190,7 +205,8 @@ export default async function SaudePage({ searchParams }: PageProps) {
                 className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
               />
             </div>
-          </form>
+            </ExpandableCreateForm>
+          </div>
 
           <div className="mt-4 space-y-2">
             {doctors.length === 0 ? (
@@ -222,7 +238,21 @@ export default async function SaudePage({ searchParams }: PageProps) {
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">Medicamentos</h2>
-          <form action={createMedication} className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="mt-4">
+            <ExpandableCreateForm
+              id="create-medication"
+              title="Cadastrar medicamento"
+              buttonLabel="NOVO MEDICAMENTO"
+              submitAction={createMedication}
+              outcome={
+                searchParams.error
+                  ? "error"
+                  : searchParams.success === "med_created"
+                    ? "success"
+                    : null
+              }
+              formClassName="grid grid-cols-1 gap-3 md:grid-cols-2"
+            >
             <select name="person_id" className="rounded-xl border border-slate-300 px-3 py-2">
               <option value="">Pessoa</option>
               {people.map((person) => (
@@ -257,7 +287,8 @@ export default async function SaudePage({ searchParams }: PageProps) {
                 className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
               />
             </div>
-          </form>
+            </ExpandableCreateForm>
+          </div>
 
           <div className="mt-4 space-y-2">
             {medications.length === 0 ? (
@@ -304,7 +335,22 @@ export default async function SaudePage({ searchParams }: PageProps) {
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">Exames</h2>
-          <form action={createHealthExam} className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3" encType="multipart/form-data">
+          <div className="mt-4">
+            <ExpandableCreateForm
+              id="create-health-exam"
+              title="Cadastrar exame"
+              buttonLabel="NOVO EXAME"
+              submitAction={createHealthExam}
+              encType="multipart/form-data"
+              outcome={
+                searchParams.error
+                  ? "error"
+                  : searchParams.success === "exam_created"
+                    ? "success"
+                    : null
+              }
+              formClassName="grid grid-cols-1 gap-3 md:grid-cols-2"
+            >
             <select name="person_id" className="rounded-xl border border-slate-300 px-3 py-2">
               <option value="">Pessoa</option>
               {people.map((person) => (
@@ -334,7 +380,8 @@ export default async function SaudePage({ searchParams }: PageProps) {
                 className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
               />
             </div>
-          </form>
+            </ExpandableCreateForm>
+          </div>
 
           <div className="mt-4 space-y-2">
             {exams.length === 0 ? (

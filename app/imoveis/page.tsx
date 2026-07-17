@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
+import { ExpandableCreateForm } from "@/app/components/expandable-create-form";
 import { MainNav } from "@/app/components/main-nav";
 import { SubmitButton } from "@/app/components/submit-button";
 import {
@@ -170,9 +171,14 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
           </section>
         )}
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">Novo imovel</h2>
-          <form action={createProperty} className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <ExpandableCreateForm
+          id="create-property"
+          title="Cadastrar imóvel"
+          buttonLabel="NOVO IMÓVEL"
+          submitAction={createProperty}
+          outcome={searchParams.error ? "error" : searchParams.success ? "success" : null}
+          formClassName="grid grid-cols-1 gap-4 md:grid-cols-2"
+        >
             <input name="title" required placeholder="Nome de identificacao" className="rounded-xl border border-slate-300 px-3 py-2" />
             <input name="property_type" placeholder="Tipo" className="rounded-xl border border-slate-300 px-3 py-2" />
             <input name="address" required placeholder="Endereco" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
@@ -208,8 +214,7 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                 className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
               />
             </div>
-          </form>
-        </section>
+        </ExpandableCreateForm>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
