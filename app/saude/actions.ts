@@ -1,8 +1,11 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import {
+  intakeDocumentFile,
+  processDocumentPipeline,
+} from "@/app/documentos/actions";
 import type { ActionErrorCode } from "@/lib/action-feedback";
 import { errorRedirectPath, reportActionError } from "@/lib/action-error";
 import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
@@ -10,6 +13,7 @@ import { createClient } from "@/lib/supabase/server";
 import { logTimelineEvent } from "@/lib/timeline/log-event";
 
 const EXAMS_BUCKET = "family-health";
+const DOCUMENTS_BUCKET = "family-documents";
 const MAX_EXAM_FILE_SIZE = 20 * 1024 * 1024;
 
 function failHealth(
@@ -28,10 +32,6 @@ function failHealth(
     fallback,
   });
   redirect(errorRedirectPath("/saude", result));
-}
-
-function sanitizeFileName(name: string) {
-  return name.replace(/[^a-zA-Z0-9_.-]/g, "_");
 }
 
 export async function createDoctor(formData: FormData) {
@@ -224,13 +224,30 @@ export async function createHealthExam(formData: FormData) {
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
 
-  const examName = (formData.get("exam_name") as string | null)?.trim();
-  if (!examName) redirect("/saude?error=required_fields");
-
   const file = formData.get("file");
+  const providedExamName = (formData.get("exam_name") as string | null)?.trim();
+  if (
+    !providedExamName &&
+    (!(file instanceof File) || file.size === 0)
+  ) {
+    redirect("/saude?error=required_fields");
+  }
+  const examName = providedExamName || "Exame em revisao";
+
   if (file instanceof File && file.size > 0) {
     if (file.size > MAX_EXAM_FILE_SIZE) redirect("/saude?error=file_too_large");
-    if (file.type !== "application/pdf") redirect("/saude?error=unsupported_file_type");
+    if (
+      ![
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/tiff",
+        "image/tif",
+      ].includes(file.type)
+    ) {
+      redirect("/saude?error=unsupported_file_type");
+    }
   }
 
   const { data: insertedExam, error: insertError } = await supabase
@@ -264,30 +281,79 @@ export async function createHealthExam(formData: FormData) {
   }
 
   if (file instanceof File && file.size > 0) {
-    const fileName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(file.name)}`;
-    const path = `${family.id}/${insertedExam.id}/${fileName}`;
-    const arrayBuffer = await file.arrayBuffer();
-
-    const { error: uploadError } = await supabase.storage.from(EXAMS_BUCKET).upload(path, arrayBuffer, {
-      contentType: file.type || "application/pdf",
-      upsert: false,
-    });
-
-    if (uploadError) {
-      await supabase.from("health_exams").delete().eq("id", insertedExam.id);
-      failHealth(uploadError, user.id, family.id, "upload_health_exam", "storage_failed");
+    let documentId = "";
+    try {
+      const intake = await intakeDocumentFile({
+        familyId: family.id,
+        userId: user.id,
+        file,
+        ownerPersonId:
+          (formData.get("person_id") as string | null) || null,
+        documentType: "Exame",
+        title: providedExamName || null,
+        issueDate:
+          (formData.get("performed_date") as string | null) || null,
+        expirationDate:
+          (formData.get("next_date") as string | null) || null,
+        country: "Brasil",
+        metadata: {
+          health_exam_id: insertedExam.id,
+          observacoes:
+            (formData.get("notes") as string | null)?.trim() || null,
+        },
+        source: "saude.actions",
+      });
+      documentId = intake.documentId;
+    } catch (error) {
+      failHealth(
+        error,
+        user.id,
+        family.id,
+        "intake_health_exam",
+        "storage_failed"
+      );
     }
 
     const { error: updateFileError } = await supabase
       .from("health_exams")
-      .update({ file_path: path, file_name: file.name, mime_type: file.type || "application/pdf" })
+      .update({
+        file_path: `document:${documentId}`,
+        file_name: file.name,
+        mime_type: file.type || "application/pdf",
+      })
       .eq("id", insertedExam.id)
       .eq("family_id", family.id);
     if (updateFileError) {
-      await supabase.storage.from(EXAMS_BUCKET).remove([path]);
-      await supabase.from("health_exams").delete().eq("id", insertedExam.id);
       failHealth(updateFileError, user.id, family.id, "link_health_exam_file", "update_failed");
     }
+
+    await logTimelineEvent({
+      familyId: family.id,
+      eventType: "health_exam_created",
+      affectedEntityType: "health_exams",
+      affectedEntityId: insertedExam.id,
+      source: "saude.actions",
+    });
+
+    const ocrResult = await processDocumentPipeline({
+      familyId: family.id,
+      documentId,
+    });
+    revalidatePath("/saude");
+    revalidatePath("/documentos");
+    revalidatePath("/dashboard");
+    if (!ocrResult.ok) {
+      redirect(
+        `/documentos/${documentId}/revisar?success=uploaded&warning=ocr_failed&reason=${encodeURIComponent(
+          ocrResult.error.code
+        )}`
+      );
+    }
+    redirect(
+      `/documentos/${documentId}/revisar?success=${
+        ocrResult.outcome === "manual" ? "uploaded_manual" : "uploaded_ocr"
+      }`
+    );
   }
 
   await logTimelineEvent({
@@ -301,6 +367,107 @@ export async function createHealthExam(formData: FormData) {
   revalidatePath("/saude");
   revalidatePath("/dashboard");
   redirect("/saude?success=exam_created");
+}
+
+export async function attachHealthExamDocument(formData: FormData) {
+  const { user, family } = await getFamilyContext();
+  const supabase = createClient();
+
+  if (!user) redirect("/login");
+  if (!family) redirect("/dashboard?setup=required");
+
+  const examId = formData.get("id") as string | null;
+  const file = formData.get("file");
+  if (!examId || !(file instanceof File) || file.size === 0) {
+    redirect("/saude?error=required_fields");
+  }
+
+  const { data: exam, error: examError } = await supabase
+    .from("health_exams")
+    .select("id, person_id, exam_name, performed_date, next_date, notes, file_path")
+    .eq("id", examId)
+    .eq("family_id", family.id)
+    .maybeSingle();
+  if (examError || !exam) {
+    failHealth(
+      examError ?? new Error("health_exam_not_found"),
+      user.id,
+      family.id,
+      "attach_exam_read",
+      "not_found"
+    );
+  }
+
+  let documentId = "";
+  try {
+    const intake = await intakeDocumentFile({
+      familyId: family.id,
+      userId: user.id,
+      file,
+      documentId: exam.file_path?.startsWith("document:")
+        ? exam.file_path.slice("document:".length)
+        : null,
+      ownerPersonId: exam.person_id,
+      documentType: "Exame",
+      title: exam.exam_name,
+      issueDate: exam.performed_date,
+      expirationDate: exam.next_date,
+      country: "Brasil",
+      metadata: {
+        health_exam_id: exam.id,
+        observacoes: exam.notes,
+      },
+      source: "saude.actions",
+    });
+    documentId = intake.documentId;
+  } catch (error) {
+    failHealth(
+      error,
+      user.id,
+      family.id,
+      "attach_exam_intake",
+      "storage_failed"
+    );
+  }
+
+  const { error: linkError } = await supabase
+    .from("health_exams")
+    .update({
+      file_path: `document:${documentId}`,
+      file_name: file.name,
+      mime_type: file.type || "application/octet-stream",
+    })
+    .eq("id", examId)
+    .eq("family_id", family.id);
+  if (linkError) {
+    failHealth(
+      linkError,
+      user.id,
+      family.id,
+      "attach_exam_link",
+      "update_failed"
+    );
+  }
+
+  const ocrResult = await processDocumentPipeline({
+    familyId: family.id,
+    documentId,
+  });
+  revalidatePath("/saude");
+  revalidatePath("/documentos");
+  revalidatePath("/dashboard");
+  if (!ocrResult.ok) {
+    redirect(
+      `/documentos/${documentId}/revisar?success=uploaded&warning=ocr_failed&reason=${encodeURIComponent(
+        ocrResult.error.code
+      )}`
+    );
+  }
+  redirect(
+    `/documentos/${documentId}/revisar?success=${
+      ocrResult.outcome === "manual" ? "uploaded_manual" : "uploaded_ocr"
+    }`
+  );
 }
 
 export async function updateHealthExamStatus(formData: FormData) {
@@ -367,9 +534,56 @@ export async function deleteHealthExam(formData: FormData) {
     .maybeSingle();
 
   if (exam?.file_path) {
-    const { error: storageError } = await supabase.storage.from(EXAMS_BUCKET).remove([exam.file_path]);
-    if (storageError) {
-      failHealth(storageError, user.id, family.id, "delete_health_exam_file", "storage_failed");
+    if (exam.file_path.startsWith("document:")) {
+      const documentId = exam.file_path.slice("document:".length);
+      const { data: document } = await supabase
+        .from("documents")
+        .select("storage_path")
+        .eq("id", documentId)
+        .eq("family_id", family.id)
+        .maybeSingle();
+      const { error: documentDeleteError } = await supabase
+        .from("documents")
+        .delete()
+        .eq("id", documentId)
+        .eq("family_id", family.id);
+      if (documentDeleteError) {
+        failHealth(
+          documentDeleteError,
+          user.id,
+          family.id,
+          "delete_health_exam_document",
+          "delete_failed"
+        );
+      }
+      if (document?.storage_path && document.storage_path !== "pending") {
+        const { error: storageError } = await supabase.storage
+          .from(DOCUMENTS_BUCKET)
+          .remove([document.storage_path]);
+        if (storageError) {
+          reportActionError({
+            error: storageError,
+            userId: user.id,
+            familyId: family.id,
+            module: "saude",
+            action: "delete_health_exam_document_file_after_record",
+            fallback: "storage_failed",
+          });
+        }
+      }
+    } else {
+      const { error: storageError } = await supabase.storage
+        .from(EXAMS_BUCKET)
+        .remove([exam.file_path]);
+      if (storageError) {
+        failHealth(
+          storageError,
+          user.id,
+          family.id,
+          "delete_health_exam_file",
+          "storage_failed"
+        );
+      }
     }
   }
 

@@ -1,8 +1,11 @@
 "use server";
 
-import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import {
+  intakeDocumentFile,
+  processDocumentPipeline,
+} from "@/app/documentos/actions";
 import type { ActionErrorCode } from "@/lib/action-feedback";
 import { errorRedirectPath, reportActionError } from "@/lib/action-error";
 import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
@@ -10,15 +13,6 @@ import { createClient } from "@/lib/supabase/server";
 import { logTimelineEvent } from "@/lib/timeline/log-event";
 
 const DOCUMENTS_BUCKET = "family-documents";
-const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024;
-const ALLOWED_DOCUMENT_TYPES = new Set([
-  "application/pdf",
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/tiff",
-]);
-
 function failProperty(
   error: unknown,
   userId: string,
@@ -35,15 +29,6 @@ function failProperty(
     fallback,
   });
   redirect(errorRedirectPath("/imoveis", result));
-}
-
-function sanitizePathPart(value: string) {
-  const normalized = value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9_.-]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return normalized || "documento";
 }
 
 function toNumberOrNull(value: FormDataEntryValue | null) {
@@ -299,16 +284,13 @@ export async function createPropertyDocument(formData: FormData) {
   if (!family) redirect("/dashboard?setup=required");
 
   const propertyId = formData.get("property_id") as string | null;
-  const title = (formData.get("title") as string | null)?.trim();
-  const documentType = (formData.get("document_type") as string | null)?.trim();
+  const title = (formData.get("title") as string | null)?.trim() || null;
+  const documentType =
+    (formData.get("document_type") as string | null)?.trim() || null;
   const file = formData.get("file");
 
-  if (!propertyId || !title || !documentType || !(file instanceof File) || file.size === 0) {
+  if (!propertyId || !(file instanceof File) || file.size === 0) {
     redirect("/imoveis?error=required_fields");
-  }
-  if (file.size > MAX_DOCUMENT_SIZE) redirect("/imoveis?error=file_too_large");
-  if (!ALLOWED_DOCUMENT_TYPES.has(file.type)) {
-    redirect("/imoveis?error=unsupported_file_type");
   }
 
   const { data: property, error: propertyError } = await supabase
@@ -327,110 +309,57 @@ export async function createPropertyDocument(formData: FormData) {
     );
   }
 
-  const storedName = `${Date.now()}-${randomUUID()}-${sanitizePathPart(file.name)}`;
-  const storagePath = [
-    family.id,
-    propertyId,
-    sanitizePathPart(documentType),
-    storedName,
-  ].join("/");
-  const bytes = new Uint8Array(await file.arrayBuffer());
-
-  const { error: uploadError } = await supabase.storage
-    .from(DOCUMENTS_BUCKET)
-    .upload(storagePath, bytes, {
-      contentType: file.type,
-      upsert: false,
-    });
-  if (uploadError) {
-    failProperty(
-      uploadError,
-      user.id,
-      family.id,
-      "upload_property_document",
-      "storage_failed"
-    );
-  }
-
-  const { data: document, error: documentError } = await supabase
-    .from("documents")
-    .insert({
-      family_id: family.id,
-      property_id: propertyId,
-      owner_person_id: null,
-      document_type: documentType,
-      document_number: null,
+  let documentId = "";
+  try {
+    const intake = await intakeDocumentFile({
+      familyId: family.id,
+      userId: user.id,
+      file,
+      propertyId,
+      documentType,
       title,
-      issue_date: (formData.get("issue_date") as string | null) || null,
-      expiration_date: (formData.get("expiration_date") as string | null) || null,
-      issuing_authority: null,
+      issueDate: (formData.get("issue_date") as string | null) || null,
+      expirationDate:
+        (formData.get("expiration_date") as string | null) || null,
       country: "Brasil",
-      storage_provider: "supabase_storage",
-      storage_path: storagePath,
-      file_name: file.name,
-      mime_type: file.type,
-      version: 1,
-      is_current: true,
-      status: "active",
-      processing_status: "Enviado",
-      review_required: true,
       metadata: {
-        observacoes: (formData.get("observacoes") as string | null)?.trim() || null,
+        observacoes:
+          (formData.get("observacoes") as string | null)?.trim() || null,
       },
-    })
-    .select("id")
-    .single();
-
-  if (documentError || !document) {
-    await supabase.storage.from(DOCUMENTS_BUCKET).remove([storagePath]);
+      source: "imoveis.actions",
+    });
+    documentId = intake.documentId;
+  } catch (error) {
     failProperty(
-      documentError ?? new Error("property_document_not_returned"),
+      error,
       user.id,
       family.id,
-      "create_property_document",
+      "intake_property_document",
       "create_failed"
     );
   }
 
-  const { error: versionError } = await supabase.from("document_versions").insert({
-    family_id: family.id,
-    document_id: document.id,
-    version: 1,
-    storage_path: storagePath,
-    file_name: file.name,
-    mime_type: file.type,
-    file_hash_sha256: createHash("sha256").update(bytes).digest("hex"),
-    uploaded_by: user.id,
-    uploaded_at: new Date().toISOString(),
-    is_current: true,
-  });
-  if (versionError) {
-    failProperty(
-      versionError,
-      user.id,
-      family.id,
-      "create_property_document_version",
-      "create_failed"
-    );
-  }
-
-  await logTimelineEvent({
+  const ocrResult = await processDocumentPipeline({
     familyId: family.id,
-    eventType: "property_document_uploaded",
-    affectedEntityType: "documents",
-    affectedEntityId: document.id,
-    source: "imoveis.actions",
-    newState: {
-      property_id: propertyId,
-      document_type: documentType,
-    },
+    documentId,
   });
 
   revalidatePath("/imoveis");
   revalidatePath("/documentos");
   revalidatePath("/dashboard");
   revalidatePath("/timeline");
-  redirect("/imoveis?success=document_uploaded");
+  if (!ocrResult.ok) {
+    redirect(
+      `/documentos/${documentId}/revisar?success=uploaded&warning=ocr_failed&reason=${encodeURIComponent(
+        ocrResult.error.code
+      )}`
+    );
+  }
+  redirect(
+    `/documentos/${documentId}/revisar?success=${
+      ocrResult.outcome === "manual" ? "uploaded_manual" : "uploaded_ocr"
+    }`
+  );
 }
 
 export async function deletePropertyDocument(formData: FormData) {

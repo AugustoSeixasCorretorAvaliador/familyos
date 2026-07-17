@@ -4,6 +4,7 @@ import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { MainNav } from "@/app/components/main-nav";
 import { confirmDocumentReview, processDocumentOCR, rejectDocumentReview } from "@/app/documentos/actions";
 import { OcrSubmitButton } from "@/app/documentos/[id]/revisar/ocr-submit-button";
+import { mergeOcrSuggestions } from "@/lib/document-intake/merge";
 import { getFamilyContext } from "@/lib/family/context";
 import { getOcrConfig } from "@/lib/ocr/config";
 import { getOcrPublicMessage } from "@/lib/ocr/errors";
@@ -161,6 +162,31 @@ export default async function RevisarDocumentoPage({ params, searchParams }: Pag
 
   const interpretedFields = parsed?.interpreted_fields ?? {};
   const confidenceByField = parsed?.confidence_by_field ?? {};
+  const isDraft = doc.metadata?.intake_draft === true;
+  const mergedCoreFields = mergeOcrSuggestions({
+    currentValues: {
+      title: isDraft && doc.title === "Documento em revisao" ? "" : doc.title,
+      document_type:
+        isDraft && doc.document_type === "Documento Generico"
+          ? ""
+          : doc.document_type,
+      document_number: doc.document_number,
+      issuing_authority: doc.issuing_authority,
+      country: doc.country,
+      issue_date: doc.issue_date,
+      expiration_date: doc.expiration_date,
+    },
+    suggestedValues: {
+      title: valueString(interpretedFields.suggested_title),
+      document_type: valueString(interpretedFields.detected_document_type),
+      document_number: valueString(interpretedFields.numero),
+      issuing_authority: valueString(interpretedFields.orgao_emissor),
+      country: valueString(interpretedFields.pais),
+      issue_date: valueString(interpretedFields.data_emissao),
+      expiration_date: valueString(interpretedFields.data_validade),
+    },
+    mode: isDraft ? "new" : "existing",
+  });
   const { reviewThreshold } = getOcrConfig();
   const feedback = feedbackMessage(searchParams, doc.ocr_provider);
   const hasOcrWarning = searchParams.warning === "ocr_failed" || searchParams.error === "ocr_failed";
@@ -253,45 +279,51 @@ export default async function RevisarDocumentoPage({ params, searchParams }: Pag
               Campos abaixo de {Math.round(reviewThreshold * 100)}% de confianca estimada aparecem
               destacados para conferencia humana.
             </p>
+            {mergedCoreFields.conflicts.length > 0 && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                O OCR encontrou sugestoes diferentes em campos ja preenchidos.
+                Os valores atuais foram preservados para sua conferencia.
+              </div>
+            )}
 
             <form action={confirmDocumentReview} className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
               <input type="hidden" name="document_id" value={doc.id} />
 
               <input
                 name="title"
-                defaultValue={doc.title}
+                defaultValue={mergedCoreFields.values.title}
                 placeholder="Titulo"
                 className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2"
               />
               <input
                 name="document_type"
-                defaultValue={doc.document_type}
+                defaultValue={mergedCoreFields.values.document_type}
                 placeholder="Tipo"
                 className="rounded-xl border border-slate-300 px-3 py-2"
               />
               <input
                 name="document_number"
-                defaultValue={doc.document_number ?? ""}
+                defaultValue={mergedCoreFields.values.document_number}
                 placeholder="Numero principal"
                 className="rounded-xl border border-slate-300 px-3 py-2"
               />
               <input
                 name="issuing_authority"
-                defaultValue={doc.issuing_authority ?? ""}
+                defaultValue={mergedCoreFields.values.issuing_authority}
                 placeholder="Orgao emissor"
                 className="rounded-xl border border-slate-300 px-3 py-2"
               />
               <input
                 name="country"
-                defaultValue={doc.country ?? "Brasil"}
+                defaultValue={mergedCoreFields.values.country || "Brasil"}
                 placeholder="Pais"
                 className="rounded-xl border border-slate-300 px-3 py-2"
               />
-              <input name="issue_date" type="date" defaultValue={doc.issue_date ?? ""} className="rounded-xl border border-slate-300 px-3 py-2" />
+              <input name="issue_date" type="date" defaultValue={mergedCoreFields.values.issue_date} className="rounded-xl border border-slate-300 px-3 py-2" />
               <input
                 name="expiration_date"
                 type="date"
-                defaultValue={doc.expiration_date ?? ""}
+                defaultValue={mergedCoreFields.values.expiration_date}
                 className="rounded-xl border border-slate-300 px-3 py-2"
               />
 

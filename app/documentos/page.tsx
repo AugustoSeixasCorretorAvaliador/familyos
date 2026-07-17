@@ -155,8 +155,17 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
           outcome={searchParams.error ? "error" : searchParams.success ? "success" : null}
           formClassName="grid grid-cols-1 gap-4 md:grid-cols-2"
         >
-            <input name="title" required placeholder="Titulo" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <select name="document_type" required className="rounded-xl border border-slate-300 px-3 py-2">
+            <input
+              name="file"
+              type="file"
+              accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/tif"
+              className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2"
+            />
+            <p className="text-xs text-slate-500 md:col-span-2">
+              Envie ou fotografe primeiro para usar o OCR. Sem arquivo, informe ao menos o titulo e salve manualmente. Formatos: PDF, PNG, JPEG, WEBP, TIFF. Limite: 20MB.
+            </p>
+            <input name="title" placeholder="Titulo (opcional antes do OCR)" className="rounded-xl border border-slate-300 px-3 py-2" />
+            <select name="document_type" className="rounded-xl border border-slate-300 px-3 py-2">
               <option value="">Tipo</option>
               {DOCUMENT_TYPES.map((type) => (
                 <option key={type} value={type}>
@@ -177,14 +186,6 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
             <input name="country" defaultValue="Brasil" placeholder="Pais" className="rounded-xl border border-slate-300 px-3 py-2" />
             <input name="issue_date" type="date" className="rounded-xl border border-slate-300 px-3 py-2" />
             <input name="expiration_date" type="date" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input
-              name="file"
-              type="file"
-              required
-              accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/tif"
-              className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2"
-            />
-            <p className="text-xs text-slate-500 md:col-span-2">Formatos: PDF, PNG, JPEG, WEBP, TIFF. Limite: 20MB.</p>
             <textarea name="observacoes" placeholder="Observacoes" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" rows={3} />
             <div className="md:col-span-2">
               <SubmitButton
@@ -225,12 +226,18 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
                       Titular: {document.people ? `${document.people.first_name} ${document.people.last_name}` : "Nao informado"}
                     </p>
                     <p className="text-sm text-slate-700">Arquivo: {document.file_name ?? "Sem nome"}</p>
-                    <Link
-                      href={`/documentos/${document.id}/download`}
-                      className="inline-block text-sm text-slate-700 underline hover:text-slate-900"
-                    >
-                      Baixar arquivo privado
-                    </Link>
+                    {document.file_name && document.storage_path !== "pending" ? (
+                      <Link
+                        href={`/documentos/${document.id}/download`}
+                        className="inline-block text-sm text-slate-700 underline hover:text-slate-900"
+                      >
+                        Baixar arquivo privado
+                      </Link>
+                    ) : (
+                      <p className="text-sm text-amber-700">
+                        Arquivo ainda nao enviado. Este rascunho pode ser reutilizado.
+                      </p>
+                    )}
                     <div>
                       <Link
                         href={`/documentos/${document.id}/revisar`}
@@ -266,7 +273,12 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
                       <input name="country" defaultValue={document.country ?? "Brasil"} placeholder="Pais" className="rounded-xl border border-slate-300 px-3 py-2" />
                       <input name="issue_date" type="date" defaultValue={document.issue_date ?? ""} className="rounded-xl border border-slate-300 px-3 py-2" />
                       <input name="expiration_date" type="date" defaultValue={document.expiration_date ?? ""} className="rounded-xl border border-slate-300 px-3 py-2" />
-                      <input name="file" type="file" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
+                      <input
+                        name="file"
+                        type="file"
+                        accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/tif"
+                        className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2"
+                      />
                       <textarea
                         name="observacoes"
                         defaultValue={String(document.metadata?.observacoes ?? "")}
