@@ -1,5 +1,7 @@
 "use client";
 
+import { useFormStatus } from "react-dom";
+
 type ConfirmSubmitButtonProps = {
   label: string;
   confirmMessage: string;
@@ -11,17 +13,20 @@ export function ConfirmSubmitButton({
   confirmMessage,
   className,
 }: ConfirmSubmitButtonProps) {
+  const { pending } = useFormStatus();
+
   return (
     <button
       type="submit"
       className={className}
+      disabled={pending}
       onClick={(event) => {
         if (!window.confirm(confirmMessage)) {
           event.preventDefault();
         }
       }}
     >
-      {label}
+      {pending ? "Processando..." : label}
     </button>
   );
 }
