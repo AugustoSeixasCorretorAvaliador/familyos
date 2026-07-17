@@ -325,19 +325,28 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                           className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2"
                         >
                           <input type="hidden" name="property_id" value={property.id} />
+                          <input
+                            name="file"
+                            type="file"
+                            required
+                            accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,application/pdf,image/png,image/jpeg,image/webp,image/tiff"
+                            className="rounded-xl border border-slate-300 bg-white px-3 py-2 md:col-span-2"
+                          />
+                          <p className="text-xs text-slate-500 md:col-span-2">
+                            Envie ou fotografe primeiro. Tipo, titulo e demais dados poderao ser confirmados apos o OCR.
+                          </p>
                           <select
                             name="document_type"
-                            required
                             className="rounded-xl border border-slate-300 bg-white px-3 py-2"
                           >
+                            <option value="">Tipo (opcional antes do OCR)</option>
                             {PROPERTY_DOCUMENT_TYPES.map((type) => (
                               <option key={type} value={type}>{type}</option>
                             ))}
                           </select>
                           <input
                             name="title"
-                            required
-                            placeholder="Titulo do documento"
+                            placeholder="Titulo (opcional antes do OCR)"
                             className="rounded-xl border border-slate-300 bg-white px-3 py-2"
                           />
                           <label className="text-sm text-slate-600">
@@ -356,13 +365,6 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                               className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
                             />
                           </label>
-                          <input
-                            name="file"
-                            type="file"
-                            required
-                            accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,application/pdf,image/png,image/jpeg,image/webp,image/tiff"
-                            className="rounded-xl border border-slate-300 bg-white px-3 py-2 md:col-span-2"
-                          />
                           <textarea
                             name="observacoes"
                             rows={2}

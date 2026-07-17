@@ -5,6 +5,7 @@ import { ExpandableCreateForm } from "@/app/components/expandable-create-form";
 import { MainNav } from "@/app/components/main-nav";
 import { SubmitButton } from "@/app/components/submit-button";
 import {
+  attachHealthExamDocument,
   createDoctor,
   createHealthExam,
   createMedication,
@@ -351,6 +352,15 @@ export default async function SaudePage({ searchParams }: PageProps) {
               }
               formClassName="grid grid-cols-1 gap-3 md:grid-cols-2"
             >
+            <input
+              name="file"
+              type="file"
+              accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/tif"
+              className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2"
+            />
+            <p className="text-xs text-slate-500 md:col-span-2">
+              Envie o PDF ou fotografe o exame primeiro. O OCR preenchera os dados possiveis para revisao; sem arquivo, informe ao menos o nome.
+            </p>
             <select name="person_id" className="rounded-xl border border-slate-300 px-3 py-2">
               <option value="">Pessoa</option>
               {people.map((person) => (
@@ -359,7 +369,7 @@ export default async function SaudePage({ searchParams }: PageProps) {
                 </option>
               ))}
             </select>
-            <input name="exam_name" required placeholder="Nome do exame" className="rounded-xl border border-slate-300 px-3 py-2" />
+            <input name="exam_name" placeholder="Nome do exame (opcional com arquivo)" className="rounded-xl border border-slate-300 px-3 py-2" />
             <input name="category" placeholder="Categoria" className="rounded-xl border border-slate-300 px-3 py-2" />
             <input name="periodicity" placeholder="Periodicidade" className="rounded-xl border border-slate-300 px-3 py-2" />
             <input name="due_date" type="date" className="rounded-xl border border-slate-300 px-3 py-2" />
@@ -372,11 +382,11 @@ export default async function SaudePage({ searchParams }: PageProps) {
               <option>Resultado recebido</option>
               <option>Atrasado</option>
             </select>
-            <input name="file" type="file" accept="application/pdf" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
             <textarea name="notes" placeholder="Observacoes" rows={2} className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
             <div className="md:col-span-2">
               <SubmitButton
                 label="Salvar exame"
+                pendingLabel="Enviando e lendo documento..."
                 className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
               />
             </div>
@@ -402,7 +412,7 @@ export default async function SaudePage({ searchParams }: PageProps) {
                   <div className="flex flex-wrap gap-2">
                     {exam.file_path && (
                       <Link href={`/saude/exames/${exam.id}/download`} className="text-sm underline text-slate-700 hover:text-slate-900">
-                        Baixar PDF
+                        Baixar arquivo
                       </Link>
                     )}
                     <form action={updateHealthExamStatus}>
@@ -418,6 +428,25 @@ export default async function SaudePage({ searchParams }: PageProps) {
                         label="Atualizar"
                         pendingLabel="Atualizando..."
                         className="ml-2 rounded-xl border border-slate-300 px-3 py-1 text-sm disabled:opacity-60"
+                      />
+                    </form>
+                    <form
+                      action={attachHealthExamDocument}
+                      encType="multipart/form-data"
+                      className="flex flex-wrap items-center gap-2"
+                    >
+                      <input type="hidden" name="id" value={exam.id} />
+                      <input
+                        name="file"
+                        type="file"
+                        required
+                        accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/tif"
+                        className="max-w-xs rounded-xl border border-slate-300 px-2 py-1 text-sm"
+                      />
+                      <SubmitButton
+                        label={exam.file_path ? "Substituir e ler" : "Anexar e ler"}
+                        pendingLabel="Lendo..."
+                        className="rounded-xl border border-slate-300 px-3 py-1 text-sm disabled:opacity-60"
                       />
                     </form>
                     {canAdminFamily(context) && (

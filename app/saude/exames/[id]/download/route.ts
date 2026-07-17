@@ -38,6 +38,12 @@ export async function GET(
   if (!exam?.file_path) {
     return NextResponse.redirect(new URL("/saude?error=file_not_found", request.url));
   }
+  if (exam.file_path.startsWith("document:")) {
+    const documentId = exam.file_path.slice("document:".length);
+    return NextResponse.redirect(
+      new URL(`/documentos/${documentId}/download`, request.url)
+    );
+  }
 
   const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(exam.file_path, 60);
 

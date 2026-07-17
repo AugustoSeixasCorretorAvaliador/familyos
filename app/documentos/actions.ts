@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { errorRedirectPath, reportActionError } from "@/lib/action-error";
 import type { ActionErrorCode } from "@/lib/action-feedback";
+import { suggestDocumentTitle } from "@/lib/document-intake/merge";
 import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { getOcrConfig } from "@/lib/ocr/config";
 import {
@@ -34,9 +35,28 @@ const DOCUMENT_STATUS = {
   ocrError: "Erro OCR",
 } as const;
 
-type SimilarDocument = {
-  id: string;
+export type DocumentFileIntakeInput = {
+  familyId: string;
+  userId: string;
+  file: File;
+  documentId?: string | null;
+  ownerPersonId?: string | null;
+  propertyId?: string | null;
+  documentType?: string | null;
+  documentNumber?: string | null;
+  title?: string | null;
+  issueDate?: string | null;
+  expirationDate?: string | null;
+  issuingAuthority?: string | null;
+  country?: string | null;
+  metadata?: Record<string, unknown>;
+  source?: string;
+};
+
+export type DocumentFileIntakeResult = {
+  documentId: string;
   version: number;
+  isNew: boolean;
 };
 
 function failDocument(
@@ -101,31 +121,6 @@ function sha256(bytes: Uint8Array) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-async function findSimilarDocument(params: {
-  familyId: string;
-  ownerPersonId: string | null;
-  documentType: string;
-  documentNumber: string | null;
-  title: string;
-}) {
-  const supabase = createClient();
-
-  let query = supabase
-    .from("documents")
-    .select("id, version")
-    .eq("family_id", params.familyId)
-    .eq("document_type", params.documentType)
-    .is("deleted_at", null)
-    .order("updated_at", { ascending: false })
-    .limit(1);
-
-  query = params.ownerPersonId ? query.eq("owner_person_id", params.ownerPersonId) : query.is("owner_person_id", null);
-  query = params.documentNumber ? query.eq("document_number", params.documentNumber) : query.eq("title", params.title);
-
-  const { data } = await query.maybeSingle();
-  return (data ?? null) as SimilarDocument | null;
-}
-
 async function upsertVersion(params: {
   familyId: string;
   documentId: string;
@@ -160,6 +155,215 @@ async function upsertVersion(params: {
     .neq("version", params.version)
     .eq("is_current", true);
   if (updateError) throw updateError;
+}
+
+export async function intakeDocumentFile(
+  input: DocumentFileIntakeInput
+): Promise<DocumentFileIntakeResult> {
+  const context = await getFamilyContext();
+  if (
+    !context.user ||
+    !context.family ||
+    context.user.id !== input.userId ||
+    context.family.id !== input.familyId
+  ) {
+    throw new Error("document_intake_scope_denied");
+  }
+  const supabase = createClient();
+  const file = input.file;
+
+  if (!(file instanceof File) || file.size === 0) {
+    throw new Error("invalid_file");
+  }
+  if (file.size > getOcrConfig().maxFileSizeBytes) {
+    throw new OcrOperationalError("file_too_large");
+  }
+  if (!ALLOWED_MIME_TYPES.has(file.type)) {
+    throw new OcrOperationalError("unsupported_format");
+  }
+
+  const documentType = normalizeDocumentType(input.documentType ?? null);
+  const title = input.title?.trim() || "Documento em revisao";
+  const ownerPersonId = input.ownerPersonId || null;
+  const source = [
+    "documentos.actions",
+    "imoveis.actions",
+    "saude.actions",
+  ].includes(input.source ?? "")
+    ? input.source!
+    : "documentos.actions";
+  const metadata = {
+    ...(input.metadata ?? {}),
+    intake_draft: !input.documentId,
+    intake_source: source,
+  };
+  let documentId = input.documentId || "";
+  let isNew = false;
+  let previous:
+    | {
+        storage_path: string;
+        file_name: string | null;
+        mime_type: string | null;
+        version: number;
+        status: string;
+        metadata: Record<string, unknown> | null;
+      }
+    | null = null;
+
+  if (documentId) {
+    const { data, error } = await supabase
+      .from("documents")
+      .select("storage_path, file_name, mime_type, version, status, metadata")
+      .eq("id", documentId)
+      .eq("family_id", input.familyId)
+      .maybeSingle();
+    if (error || !data) throw error ?? new Error("document_not_found");
+    previous = {
+      ...data,
+      metadata:
+        data.metadata && typeof data.metadata === "object"
+          ? (data.metadata as Record<string, unknown>)
+          : null,
+    };
+  } else {
+    const { data, error } = await supabase
+      .from("documents")
+      .insert({
+        family_id: input.familyId,
+        owner_person_id: ownerPersonId,
+        property_id: input.propertyId || null,
+        document_type: documentType,
+        document_number: input.documentNumber?.trim() || null,
+        title,
+        issue_date: input.issueDate || null,
+        expiration_date: input.expirationDate || null,
+        issuing_authority: input.issuingAuthority?.trim() || null,
+        country: input.country?.trim() || "Brasil",
+        storage_provider: "supabase_storage",
+        storage_path: "pending",
+        file_name: null,
+        mime_type: null,
+        version: 1,
+        is_current: true,
+        status: "pending",
+        processing_status: DOCUMENT_STATUS.uploaded,
+        review_required: true,
+        last_ocr_error: null,
+        metadata,
+      })
+      .select("id")
+      .single();
+    if (error || !data) {
+      throw error ?? new Error("document_draft_not_returned");
+    }
+    documentId = data.id;
+    isNew = true;
+  }
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const storagePath = buildStoragePath({
+    familyId: input.familyId,
+    personId: ownerPersonId,
+    documentType,
+    fileName: file.name,
+  });
+  const version = isNew ? 1 : (previous?.version ?? 1) + 1;
+
+  const { error: uploadError } = await supabase.storage
+    .from(BUCKET)
+    .upload(storagePath, bytes, {
+      contentType: file.type || "application/octet-stream",
+      upsert: false,
+    });
+  if (uploadError) {
+    if (isNew) {
+      await supabase
+        .from("documents")
+        .update({
+          metadata: {
+            ...metadata,
+            intake_error: "storage_failed",
+          },
+        })
+        .eq("id", documentId)
+        .eq("family_id", input.familyId);
+    }
+    throw uploadError;
+  }
+
+  try {
+    await upsertVersion({
+      familyId: input.familyId,
+      documentId,
+      version,
+      storagePath,
+      fileName: file.name,
+      mimeType: file.type || "application/octet-stream",
+      uploadedBy: input.userId,
+      fileHash: sha256(bytes),
+    });
+
+    const { error: updateError } = await supabase
+      .from("documents")
+      .update({
+        owner_person_id: ownerPersonId,
+        property_id: input.propertyId || undefined,
+        document_type: documentType,
+        document_number: input.documentNumber?.trim() || null,
+        title,
+        issue_date: input.issueDate || null,
+        expiration_date: input.expirationDate || null,
+        issuing_authority: input.issuingAuthority?.trim() || null,
+        country: input.country?.trim() || "Brasil",
+        storage_provider: "supabase_storage",
+        storage_path: storagePath,
+        file_name: file.name,
+        mime_type: file.type || "application/octet-stream",
+        version,
+        is_current: true,
+        status: isNew ? "pending" : previous?.status ?? "active",
+        processing_status: DOCUMENT_STATUS.uploaded,
+        review_required: true,
+        last_ocr_error: null,
+        metadata: {
+          ...(previous?.metadata ?? {}),
+          ...metadata,
+          intake_error: null,
+        },
+      })
+      .eq("id", documentId)
+      .eq("family_id", input.familyId);
+    if (updateError) throw updateError;
+  } catch (error) {
+    await supabase.storage.from(BUCKET).remove([storagePath]);
+    await supabase
+      .from("document_versions")
+      .delete()
+      .eq("family_id", input.familyId)
+      .eq("document_id", documentId)
+      .eq("version", version);
+    if (previous) {
+      await supabase
+        .from("document_versions")
+        .update({ is_current: true })
+        .eq("family_id", input.familyId)
+        .eq("document_id", documentId)
+        .eq("version", previous.version);
+    }
+    throw error;
+  }
+
+  await logTimelineEvent({
+    familyId: input.familyId,
+    eventType: input.propertyId
+      ? "property_document_uploaded"
+      : "document_uploaded",
+    affectedEntityType: "documents",
+    affectedEntityId: documentId,
+    source,
+  });
+
+  return { documentId, version, isNew };
 }
 
 async function createDocumentAlerts(input: {
@@ -213,7 +417,17 @@ async function createDocumentAlerts(input: {
   );
 }
 
-async function processDocumentPipeline(params: { familyId: string; documentId: string }) {
+export async function processDocumentPipeline(params: {
+  familyId: string;
+  documentId: string;
+}) {
+  const context = await getFamilyContext();
+  if (!context.user || !context.family || context.family.id !== params.familyId) {
+    return {
+      ok: false as const,
+      error: new OcrOperationalError("provider_unavailable"),
+    };
+  }
   const supabase = createClient();
   const config = getOcrConfig();
 
@@ -338,7 +552,17 @@ async function processDocumentPipeline(params: { familyId: string; documentId: s
       bytes,
       documentTypeHint: document.document_type,
     });
-    const interpretedFields = { ...ocr.suggestion.fields };
+    const interpretedFields = {
+      ...ocr.suggestion.fields,
+      detected_document_type: ocr.suggestion.detectedType,
+      suggested_title: suggestDocumentTitle({
+        documentType: ocr.suggestion.detectedType,
+        personName: ocr.suggestion.fields.nome,
+        documentNumber: ocr.suggestion.fields.numero,
+        registryNumber: ocr.suggestion.fields.matricula,
+        issueDate: ocr.suggestion.fields.data_emissao,
+      }),
+    };
     if (ocr.warnings.length > 0) {
       const warningText = `Avisos OCR: ${ocr.warnings.join(" | ")}`;
       interpretedFields.observacoes = interpretedFields.observacoes
@@ -494,7 +718,7 @@ export async function createDocument(formData: FormData) {
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
 
-  const title = (formData.get("title") as string | null)?.trim();
+  const title = (formData.get("title") as string | null)?.trim() || null;
   const documentType = normalizeDocumentType(formData.get("document_type") as string | null);
   const ownerPersonId = (formData.get("owner_person_id") as string | null) || null;
   const documentNumber = (formData.get("document_number") as string | null)?.trim() || null;
@@ -505,73 +729,9 @@ export async function createDocument(formData: FormData) {
   const observacoes = (formData.get("observacoes") as string | null)?.trim() || null;
   const file = formData.get("file");
 
-  if (!title || !(file instanceof File) || file.size === 0) redirect("/documentos?error=required_fields");
-  if (file.size > getOcrConfig().maxFileSizeBytes) redirect("/documentos?error=file_too_large");
-  if (!ALLOWED_MIME_TYPES.has(file.type)) redirect("/documentos?error=unsupported_file_type");
-
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const fileHash = sha256(bytes);
-
-  const storagePath = buildStoragePath({
-    familyId: family.id,
-    personId: ownerPersonId,
-    documentType,
-    fileName: file.name,
-  });
-
-  const { error: uploadError } = await supabase.storage.from(BUCKET).upload(storagePath, bytes, {
-    contentType: file.type || "application/octet-stream",
-    upsert: false,
-  });
-  if (uploadError) failDocument(uploadError, user.id, family.id, "upload", "storage_failed");
-
-  const similar = await findSimilarDocument({
-    familyId: family.id,
-    ownerPersonId,
-    documentType,
-    documentNumber,
-    title,
-  });
-
-  let documentId = "";
-  let version = 1;
-
-  if (similar) {
-    documentId = similar.id;
-    version = (similar.version ?? 1) + 1;
-
-    const { error } = await supabase
-      .from("documents")
-      .update({
-        owner_person_id: ownerPersonId,
-        document_type: documentType,
-        document_number: documentNumber,
-        title,
-        issue_date: issueDate,
-        expiration_date: expirationDate,
-        issuing_authority: issuingAuthority,
-        country,
-        storage_provider: "supabase_storage",
-        storage_path: storagePath,
-        file_name: file.name,
-        mime_type: file.type || "application/octet-stream",
-        version,
-        is_current: true,
-        status: "active",
-        processing_status: DOCUMENT_STATUS.uploaded,
-        review_required: true,
-        last_ocr_error: null,
-        metadata: { observacoes },
-      })
-      .eq("id", documentId)
-      .eq("family_id", family.id);
-
-    if (error) {
-      await supabase.storage.from(BUCKET).remove([storagePath]);
-      failDocument(error, user.id, family.id, "create_version", "update_failed");
-    }
-  } else {
-    const { data, error } = await supabase
+  if (!(file instanceof File) || file.size === 0) {
+    if (!title) redirect("/documentos?error=required_fields");
+    const { data: manualDocument, error: manualError } = await supabase
       .from("documents")
       .insert({
         family_id: family.id,
@@ -584,71 +744,89 @@ export async function createDocument(formData: FormData) {
         issuing_authority: issuingAuthority,
         country,
         storage_provider: "supabase_storage",
-        storage_path: storagePath,
-        file_name: file.name,
-        mime_type: file.type || "application/octet-stream",
+        storage_path: "pending",
+        file_name: null,
+        mime_type: null,
         version: 1,
         is_current: true,
         status: "active",
         processing_status: DOCUMENT_STATUS.uploaded,
-        review_required: true,
+        review_required: false,
         last_ocr_error: null,
-        metadata: { observacoes },
+        metadata: {
+          observacoes,
+          intake_draft: false,
+          intake_source: "documentos",
+        },
       })
-      .select("id, version")
+      .select("id")
       .single();
-
-    if (error || !data) {
-      await supabase.storage.from(BUCKET).remove([storagePath]);
-      failDocument(error ?? new Error("document_insert_returned_no_row"), user.id, family.id, "create", "create_failed");
+    if (manualError || !manualDocument) {
+      failDocument(
+        manualError ?? new Error("manual_document_not_returned"),
+        user.id,
+        family.id,
+        "create_manual",
+        "create_failed"
+      );
     }
-    documentId = data.id;
-    version = data.version ?? 1;
-  }
-
-  try {
-    await upsertVersion({
+    await createDocumentAlerts({
       familyId: family.id,
-      documentId,
-      version,
-      storagePath,
-      fileName: file.name,
-      mimeType: file.type || "application/octet-stream",
-      uploadedBy: user.id,
-      fileHash,
+      documentId: manualDocument.id,
+      title,
+      expirationDate,
+    });
+    await logTimelineEvent({
+      familyId: family.id,
+      eventType: "document_created",
+      affectedEntityType: "documents",
+      affectedEntityId: manualDocument.id,
+      source: "documentos.actions",
+    });
+    revalidatePath("/documentos");
+    revalidatePath("/dashboard");
+    redirect("/documentos?success=created");
+  }
+  if (file.size > getOcrConfig().maxFileSizeBytes) redirect("/documentos?error=file_too_large");
+  if (!ALLOWED_MIME_TYPES.has(file.type)) redirect("/documentos?error=unsupported_file_type");
+
+  let intake: DocumentFileIntakeResult;
+  try {
+    intake = await intakeDocumentFile({
+      familyId: family.id,
+      userId: user.id,
+      file,
+      ownerPersonId,
+      documentType,
+      documentNumber,
+      title,
+      issueDate,
+      expirationDate,
+      issuingAuthority,
+      country,
+      metadata: { observacoes },
+      source: "documentos.actions",
     });
   } catch (error) {
-    failDocument(error, user.id, family.id, "create_version_record", "create_failed");
+    failDocument(error, user.id, family.id, "intake", "create_failed");
   }
 
-  await logTimelineEvent({
+  const ocrResult = await processDocumentPipeline({
     familyId: family.id,
-    eventType: "document_uploaded",
-    affectedEntityType: "documents",
-    affectedEntityId: documentId,
-    source: "documentos.actions",
+    documentId: intake.documentId,
   });
-
-  await createDocumentAlerts({
-    familyId: family.id,
-    documentId,
-    title,
-    expirationDate,
-  });
-
-  const ocrResult = await processDocumentPipeline({ familyId: family.id, documentId });
 
   revalidatePath("/documentos");
   revalidatePath("/dashboard");
   if (!ocrResult.ok) {
     redirect(
-      `/documentos/${documentId}/revisar?success=uploaded&warning=ocr_failed&reason=${encodeURIComponent(
+      `/documentos/${intake.documentId}/revisar?success=uploaded&warning=ocr_failed&reason=${encodeURIComponent(
         ocrResult.error.code
       )}`
     );
   }
   redirect(
-    `/documentos/${documentId}/revisar?success=${
+    `/documentos/${intake.documentId}/revisar?success=${
       ocrResult.outcome === "manual" ? "uploaded_manual" : "uploaded_ocr"
     }`
   );
@@ -665,8 +843,34 @@ export async function confirmDocumentReview(formData: FormData) {
   const documentId = (formData.get("document_id") as string | null) || "";
   if (!documentId) redirect("/documentos?error=missing_id");
 
+  const { data: currentDocument, error: currentDocumentError } = await supabase
+    .from("documents")
+    .select("metadata, property_id")
+    .eq("id", documentId)
+    .eq("family_id", family.id)
+    .maybeSingle();
+  if (currentDocumentError || !currentDocument) {
+    failDocument(
+      currentDocumentError ?? new Error("document_not_found"),
+      user.id,
+      family.id,
+      "confirm_review_read",
+      "read_failed"
+    );
+  }
+  const currentMetadata =
+    currentDocument.metadata &&
+    typeof currentDocument.metadata === "object" &&
+    !Array.isArray(currentDocument.metadata)
+      ? (currentDocument.metadata as Record<string, unknown>)
+      : {};
+
   const documentType = normalizeDocumentType(formData.get("document_type") as string | null);
-  const title = (formData.get("title") as string | null)?.trim() || `Documento ${documentType}`;
+  const title =
+    (formData.get("title") as string | null)?.trim() ||
+    (documentType === "Documento Generico"
+      ? "Documento"
+      : `Documento ${documentType}`);
   const documentNumber = (formData.get("document_number") as string | null)?.trim() || null;
   const issuingAuthority = (formData.get("issuing_authority") as string | null)?.trim() || null;
   const country = (formData.get("country") as string | null)?.trim() || "Brasil";
@@ -707,10 +911,16 @@ export async function confirmDocumentReview(formData: FormData) {
       country,
       issue_date: issueDate,
       expiration_date: expirationDate,
+      status: "active",
       processing_status: DOCUMENT_STATUS.confirmed,
       review_required: false,
       last_ocr_error: null,
-      metadata: extractedFields,
+      metadata: {
+        ...currentMetadata,
+        ...extractedFields,
+        intake_draft: false,
+        intake_error: null,
+      },
     })
     .eq("id", documentId)
     .eq("family_id", family.id);
@@ -732,6 +942,36 @@ export async function confirmDocumentReview(formData: FormData) {
     failDocument(metadataError, user.id, family.id, "confirm_review_metadata", "confirm_failed");
   }
 
+  const healthExamId =
+    typeof currentMetadata.health_exam_id === "string"
+      ? currentMetadata.health_exam_id
+      : null;
+  if (healthExamId) {
+    const { data: healthExam } = await supabase
+      .from("health_exams")
+      .select("exam_name, performed_date, notes")
+      .eq("id", healthExamId)
+      .eq("family_id", family.id)
+      .maybeSingle();
+    if (healthExam) {
+      await supabase
+        .from("health_exams")
+        .update({
+          exam_name:
+            healthExam.exam_name === "Exame em revisao"
+              ? title
+              : healthExam.exam_name,
+          performed_date:
+            healthExam.performed_date ??
+            issueDate ??
+            extractedFields.data_emissao,
+          notes: healthExam.notes ?? extractedFields.observacoes,
+        })
+        .eq("id", healthExamId)
+        .eq("family_id", family.id);
+    }
+  }
+
   await createDocumentAlerts({ familyId: family.id, documentId, title, expirationDate });
 
   await logTimelineEvent({
@@ -744,7 +984,15 @@ export async function confirmDocumentReview(formData: FormData) {
 
   revalidatePath(`/documentos/${documentId}/revisar`);
   revalidatePath("/documentos");
+  revalidatePath("/imoveis");
+  revalidatePath("/saude");
   revalidatePath("/dashboard");
+  if (currentDocument.property_id) {
+    redirect("/imoveis?success=document_uploaded");
+  }
+  if (currentMetadata.intake_source === "saude.actions") {
+    redirect("/saude?success=exam_created");
+  }
   redirect("/documentos?success=confirmed");
 }
 
@@ -808,7 +1056,7 @@ export async function updateDocument(formData: FormData) {
 
   const { data: existingDoc, error: readError } = await supabase
     .from("documents")
-    .select("id, storage_path, version, property_id")
+    .select("id, property_id")
     .eq("id", documentId)
     .eq("family_id", family.id)
     .maybeSingle();
@@ -816,98 +1064,90 @@ export async function updateDocument(formData: FormData) {
   if (readError) failDocument(readError, user.id, family.id, "read_for_update", "read_failed");
   if (!existingDoc) redirect("/documentos?error=not_found");
 
-  let storagePath = existingDoc.storage_path;
-  let nextVersion = existingDoc.version ?? 1;
-  let uploadedNewVersion = false;
-
   const maybeFile = formData.get("file");
-
   if (maybeFile instanceof File && maybeFile.size > 0) {
-    if (maybeFile.size > getOcrConfig().maxFileSizeBytes) {
-      redirect("/documentos?error=file_too_large");
-    }
-    if (!ALLOWED_MIME_TYPES.has(maybeFile.type)) redirect("/documentos?error=unsupported_file_type");
-
-    const normalizedType = normalizeDocumentType((formData.get("document_type") as string | null) ?? "Documento Generico");
-    const ownerPersonId = (formData.get("owner_person_id") as string | null) || null;
-
-    storagePath = buildStoragePath({
-      familyId: family.id,
-      personId: ownerPersonId,
-      documentType: normalizedType,
-      fileName: maybeFile.name,
-    });
-
-    const bytes = new Uint8Array(await maybeFile.arrayBuffer());
-    const fileHash = sha256(bytes);
-
-    const { error: uploadError } = await supabase.storage.from(BUCKET).upload(storagePath, bytes, {
-      contentType: maybeFile.type || "application/octet-stream",
-      upsert: false,
-    });
-
-    if (uploadError) failDocument(uploadError, user.id, family.id, "upload_version", "storage_failed");
-
-    nextVersion = (existingDoc.version ?? 1) + 1;
     try {
-      await upsertVersion({
+      await intakeDocumentFile({
         familyId: family.id,
+        userId: user.id,
+        file: maybeFile,
         documentId,
-        version: nextVersion,
-        storagePath,
-        fileName: maybeFile.name,
-        mimeType: maybeFile.type || "application/octet-stream",
-        uploadedBy: user.id,
-        fileHash,
+        propertyId: existingDoc.property_id,
+        ownerPersonId:
+          (formData.get("owner_person_id") as string | null) || null,
+        documentType: formData.get("document_type") as string | null,
+        documentNumber: formData.get("document_number") as string | null,
+        title: formData.get("title") as string | null,
+        issueDate: toDateOrNull(
+          (formData.get("issue_date") as string | null) || null
+        ),
+        expirationDate: toDateOrNull(
+          (formData.get("expiration_date") as string | null) || null
+        ),
+        issuingAuthority: formData.get(
+          "issuing_authority"
+        ) as string | null,
+        country: formData.get("country") as string | null,
+        metadata: {
+          observacoes:
+            (formData.get("observacoes") as string | null)?.trim() || null,
+        },
+        source: "documentos.actions",
       });
-      uploadedNewVersion = true;
     } catch (error) {
-      await supabase.storage.from(BUCKET).remove([storagePath]);
-      failDocument(error, user.id, family.id, "update_version_record", "update_failed");
+      failDocument(error, user.id, family.id, "update_intake", "update_failed");
     }
+    const ocrResult = await processDocumentPipeline({
+      familyId: family.id,
+      documentId,
+    });
+    revalidatePath("/documentos");
+    revalidatePath("/imoveis");
+    revalidatePath("/dashboard");
+    if (!ocrResult.ok) {
+      redirect(
+        `/documentos/${documentId}/revisar?success=uploaded&warning=ocr_failed&reason=${encodeURIComponent(
+          ocrResult.error.code
+        )}`
+      );
+    }
+    redirect(
+      `/documentos/${documentId}/revisar?success=${
+        ocrResult.outcome === "manual" ? "uploaded_manual" : "uploaded_ocr"
+      }`
+    );
   }
 
   const { error } = await supabase
     .from("documents")
     .update({
-      owner_person_id: (formData.get("owner_person_id") as string | null) || null,
-      document_type: normalizeDocumentType(formData.get("document_type") as string | null),
-      document_number: (formData.get("document_number") as string | null)?.trim() || null,
-      title: (formData.get("title") as string | null)?.trim() || "Documento",
-      issue_date: toDateOrNull((formData.get("issue_date") as string | null) || null),
-      expiration_date: toDateOrNull((formData.get("expiration_date") as string | null) || null),
-      issuing_authority: (formData.get("issuing_authority") as string | null)?.trim() || null,
-      country: (formData.get("country") as string | null)?.trim() || "Brasil",
-      storage_path: storagePath,
-      version: nextVersion,
-      file_name: maybeFile instanceof File && maybeFile.size > 0 ? maybeFile.name : undefined,
-      mime_type: maybeFile instanceof File && maybeFile.size > 0 ? maybeFile.type || "application/octet-stream" : undefined,
-      processing_status: maybeFile instanceof File && maybeFile.size > 0 ? DOCUMENT_STATUS.uploaded : undefined,
-      review_required: maybeFile instanceof File && maybeFile.size > 0 ? true : undefined,
-      last_ocr_error: maybeFile instanceof File && maybeFile.size > 0 ? null : undefined,
+      owner_person_id:
+        (formData.get("owner_person_id") as string | null) || null,
+      document_type: normalizeDocumentType(
+        formData.get("document_type") as string | null
+      ),
+      document_number:
+        (formData.get("document_number") as string | null)?.trim() || null,
+      title:
+        (formData.get("title") as string | null)?.trim() || "Documento",
+      issue_date: toDateOrNull(
+        (formData.get("issue_date") as string | null) || null
+      ),
+      expiration_date: toDateOrNull(
+        (formData.get("expiration_date") as string | null) || null
+      ),
+      issuing_authority:
+        (formData.get("issuing_authority") as string | null)?.trim() || null,
+      country:
+        (formData.get("country") as string | null)?.trim() || "Brasil",
       metadata: {
-        observacoes: (formData.get("observacoes") as string | null)?.trim() || null,
+        observacoes:
+          (formData.get("observacoes") as string | null)?.trim() || null,
       },
     })
     .eq("id", documentId)
     .eq("family_id", family.id);
-
   if (error) {
-    if (uploadedNewVersion) {
-      await supabase
-        .from("document_versions")
-        .delete()
-        .eq("family_id", family.id)
-        .eq("document_id", documentId)
-        .eq("version", nextVersion);
-      await supabase
-        .from("document_versions")
-        .update({ is_current: true })
-        .eq("family_id", family.id)
-        .eq("document_id", documentId)
-        .eq("version", existingDoc.version ?? 1);
-      await supabase.storage.from(BUCKET).remove([storagePath]);
-    }
     failDocument(error, user.id, family.id, "update", "update_failed");
   }
 
@@ -918,10 +1158,6 @@ export async function updateDocument(formData: FormData) {
     affectedEntityId: documentId,
     source: "documentos.actions",
   });
-
-  if (maybeFile instanceof File && maybeFile.size > 0) {
-    void processDocumentPipeline({ familyId: family.id, documentId });
-  }
 
   revalidatePath("/documentos");
   revalidatePath("/imoveis");
