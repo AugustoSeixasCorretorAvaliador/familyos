@@ -60,6 +60,7 @@ export async function middleware(request: NextRequest) {
 
   const protectedPrefixes = [
     "/dashboard",
+    "/ai-executive",
     "/pessoas",
     "/imoveis",
     "/documentos",
@@ -94,6 +95,7 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     "/dashboard/:path*",
+    "/ai-executive/:path*",
     "/pessoas/:path*",
     "/imoveis/:path*",
     "/documentos/:path*",

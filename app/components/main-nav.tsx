@@ -4,6 +4,7 @@ import Link from "next/link";
 type MainNavProps = {
   current:
     | "dashboard"
+    | "ai-executive"
     | "pessoas"
     | "imoveis"
     | "documentos"
@@ -18,6 +19,7 @@ type MainNavProps = {
 
 const items: Array<{ key: MainNavProps["current"]; label: string; href?: string }> = [
   { key: "dashboard", label: "Dashboard", href: "/dashboard" },
+  { key: "ai-executive", label: "AI Executive", href: "/ai-executive" },
   { key: "pessoas", label: "Pessoas", href: "/pessoas" },
   { key: "imoveis", label: "Imoveis", href: "/imoveis" },
   { key: "documentos", label: "Documentos", href: "/documentos" },

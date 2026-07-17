@@ -411,6 +411,34 @@ export default async function DashboardPage() {
           </section>
         )}
 
+        <section className="overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-[#061638] via-[#083f86] to-[#6b2fcf] p-6 text-white shadow-sm sm:p-8">
+          <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr] lg:items-center">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-200">
+                Inteligência familiar segura
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold">AI Executive</h2>
+              <p className="mt-3 max-w-xl text-sm leading-6 text-blue-50">
+                Consulte riscos, pendências e próximos passos com base apenas nos dados autorizados da sua família.
+              </p>
+              <Link
+                href="/ai-executive"
+                className="mt-5 inline-flex rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#075fc7] shadow-sm transition hover:bg-blue-50"
+              >
+                Abrir AI Executive
+              </Link>
+            </div>
+            <div className="rounded-2xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
+              <p className="text-sm font-medium text-white">Experimente perguntar:</p>
+              <ul className="mt-3 space-y-2 text-sm text-blue-50">
+                <li>Como está minha família hoje?</li>
+                <li>Quais pendências são urgentes?</li>
+                <li>Quais documentos vencem em breve?</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <article className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Visao Geral</h2>
