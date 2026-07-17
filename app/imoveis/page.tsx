@@ -69,6 +69,7 @@ type PropertyDocumentRow = {
 
 const SITUACOES = ["Proprio", "Alugado", "A venda", "Vendido", "Em aquisicao", "Vago"];
 const PROPERTY_DOCUMENT_TYPES = [
+  "Promessa de Compra e Venda",
   "RGI / Matricula",
   "Escritura",
   "IPTU",
@@ -76,6 +77,7 @@ const PROPERTY_DOCUMENT_TYPES = [
   "Laudemio",
   "Planta",
   "Convencao de Condominio",
+  "Documento de Condominio",
   "Seguro",
   "Outro",
 ];
@@ -326,15 +328,27 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                         >
                           <input type="hidden" name="property_id" value={property.id} />
                           <input
-                            name="file"
+                            name="files"
                             type="file"
+                            multiple
                             required
                             accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,application/pdf,image/png,image/jpeg,image/webp,image/tiff"
                             className="rounded-xl border border-slate-300 bg-white px-3 py-2 md:col-span-2"
                           />
                           <p className="text-xs text-slate-500 md:col-span-2">
-                            Envie ou fotografe primeiro. Tipo, titulo e demais dados poderao ser confirmados apos o OCR.
+                            Selecione um arquivo para OCR ou ate 10 arquivos para arquivar no historico sem OCR.
                           </p>
+                          <label className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-900 md:col-span-2">
+                            <input
+                              name="archive_without_ocr"
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 rounded border-emerald-400"
+                            />
+                            <span>
+                              <strong className="block">Somente arquivar no historico</strong>
+                              Nao executar OCR agora. Os arquivos permanecem vinculados ao imovel e poderao ser revisados ou processados depois.
+                            </span>
+                          </label>
                           <select
                             name="document_type"
                             className="rounded-xl border border-slate-300 bg-white px-3 py-2"
@@ -373,8 +387,8 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                           />
                           <div className="md:col-span-2">
                             <SubmitButton
-                              label="Enviar documento"
-                              pendingLabel="Enviando..."
+                              label="Enviar e guardar"
+                              pendingLabel="Enviando arquivos..."
                               className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
                             />
                           </div>

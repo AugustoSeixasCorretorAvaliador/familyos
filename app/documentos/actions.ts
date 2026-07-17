@@ -28,6 +28,7 @@ const ALLOWED_MIME_TYPES = new Set([
 
 const DOCUMENT_STATUS = {
   uploaded: "Enviado",
+  archived: "Arquivado sem OCR",
   processing: "OCR em processamento",
   waitingReview: "Aguardando conferencia",
   confirmed: "Confirmado",
@@ -42,6 +43,7 @@ export type DocumentFileIntakeInput = {
   documentId?: string | null;
   ownerPersonId?: string | null;
   propertyId?: string | null;
+  skipOcr?: boolean;
   documentType?: string | null;
   documentNumber?: string | null;
   title?: string | null;
@@ -194,8 +196,9 @@ export async function intakeDocumentFile(
     : "documentos.actions";
   const metadata = {
     ...(input.metadata ?? {}),
-    intake_draft: !input.documentId,
+    intake_draft: !input.documentId && !input.skipOcr,
     intake_source: source,
+    archived_without_ocr: input.skipOcr === true,
   };
   let documentId = input.documentId || "";
   let isNew = false;
@@ -245,9 +248,11 @@ export async function intakeDocumentFile(
         mime_type: null,
         version: 1,
         is_current: true,
-        status: "pending",
-        processing_status: DOCUMENT_STATUS.uploaded,
-        review_required: true,
+        status: input.skipOcr ? "active" : "pending",
+        processing_status: input.skipOcr
+          ? DOCUMENT_STATUS.archived
+          : DOCUMENT_STATUS.uploaded,
+        review_required: !input.skipOcr,
         last_ocr_error: null,
         metadata,
       })
@@ -321,9 +326,15 @@ export async function intakeDocumentFile(
         mime_type: file.type || "application/octet-stream",
         version,
         is_current: true,
-        status: isNew ? "pending" : previous?.status ?? "active",
-        processing_status: DOCUMENT_STATUS.uploaded,
-        review_required: true,
+        status: input.skipOcr
+          ? "active"
+          : isNew
+            ? "pending"
+            : previous?.status ?? "active",
+        processing_status: input.skipOcr
+          ? DOCUMENT_STATUS.archived
+          : DOCUMENT_STATUS.uploaded,
+        review_required: !input.skipOcr,
         last_ocr_error: null,
         metadata: {
           ...(previous?.metadata ?? {}),

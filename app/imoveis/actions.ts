@@ -8,6 +8,12 @@ import {
 } from "@/app/documentos/actions";
 import type { ActionErrorCode } from "@/lib/action-feedback";
 import { errorRedirectPath, reportActionError } from "@/lib/action-error";
+import {
+  getPropertyDocumentFiles,
+  getPropertyDocumentTitle,
+  isArchiveWithoutOcr,
+  MAX_PROPERTY_ARCHIVE_FILES,
+} from "@/lib/document-intake/property-files";
 import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 import { logTimelineEvent } from "@/lib/timeline/log-event";
@@ -287,10 +293,17 @@ export async function createPropertyDocument(formData: FormData) {
   const title = (formData.get("title") as string | null)?.trim() || null;
   const documentType =
     (formData.get("document_type") as string | null)?.trim() || null;
-  const file = formData.get("file");
+  const files = getPropertyDocumentFiles(formData);
+  const archiveWithoutOcr = isArchiveWithoutOcr(formData);
 
-  if (!propertyId || !(file instanceof File) || file.size === 0) {
+  if (!propertyId || files.length === 0) {
     redirect("/imoveis?error=required_fields");
+  }
+  if (files.length > MAX_PROPERTY_ARCHIVE_FILES) {
+    redirect("/imoveis?error=too_many_files");
+  }
+  if (!archiveWithoutOcr && files.length > 1) {
+    redirect("/imoveis?error=multiple_files_require_archive");
   }
 
   const { data: property, error: propertyError } = await supabase
@@ -309,26 +322,33 @@ export async function createPropertyDocument(formData: FormData) {
     );
   }
 
-  let documentId = "";
+  const documentIds: string[] = [];
   try {
-    const intake = await intakeDocumentFile({
-      familyId: family.id,
-      userId: user.id,
-      file,
-      propertyId,
-      documentType,
-      title,
-      issueDate: (formData.get("issue_date") as string | null) || null,
-      expirationDate:
-        (formData.get("expiration_date") as string | null) || null,
-      country: "Brasil",
-      metadata: {
-        observacoes:
-          (formData.get("observacoes") as string | null)?.trim() || null,
-      },
-      source: "imoveis.actions",
-    });
-    documentId = intake.documentId;
+    for (const file of files) {
+      const intake = await intakeDocumentFile({
+        familyId: family.id,
+        userId: user.id,
+        file,
+        propertyId,
+        documentType,
+        title: getPropertyDocumentTitle({
+          requestedTitle: title,
+          fileName: file.name,
+          totalFiles: files.length,
+        }),
+        issueDate: (formData.get("issue_date") as string | null) || null,
+        expirationDate:
+          (formData.get("expiration_date") as string | null) || null,
+        country: "Brasil",
+        skipOcr: archiveWithoutOcr,
+        metadata: {
+          observacoes:
+            (formData.get("observacoes") as string | null)?.trim() || null,
+        },
+        source: "imoveis.actions",
+      });
+      documentIds.push(intake.documentId);
+    }
   } catch (error) {
     failProperty(
       error,
@@ -339,6 +359,15 @@ export async function createPropertyDocument(formData: FormData) {
     );
   }
 
+  if (archiveWithoutOcr) {
+    revalidatePath("/imoveis");
+    revalidatePath("/documentos");
+    revalidatePath("/dashboard");
+    revalidatePath("/timeline");
+    redirect(`/imoveis?success=documents_archived&count=${documentIds.length}`);
+  }
+
+  const documentId = documentIds[0];
   const ocrResult = await processDocumentPipeline({
     familyId: family.id,
     documentId,
