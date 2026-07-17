@@ -8,6 +8,10 @@ import { getActionErrorMessage } from "@/lib/action-feedback";
 import { getGoogleCalendarIntegrationStatus } from "@/lib/calendar/status";
 import { getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
+import {
+  loadTimelineEntries,
+  type TimelineEntry,
+} from "@/lib/timeline/load-events";
 import { redirect } from "next/navigation";
 
 type AlertRow = {
@@ -24,13 +28,6 @@ type TaskRow = {
   status: string;
   due_date: string | null;
   priority: string | null;
-};
-
-type EventRow = {
-  id: string;
-  event_type: string;
-  affected_entity_type: string;
-  occurred_at: string;
 };
 
 type PersonPreviewRow = {
@@ -157,22 +154,13 @@ function getSeverityClass(severity: string) {
   return "text-emerald-700 bg-emerald-50 border-emerald-200";
 }
 
-function eventLabel(event: EventRow) {
-  return `${event.event_type} - ${event.affected_entity_type}`;
-}
-
 export default async function DashboardPage({ searchParams }: PageProps) {
-  const { user, family, membership } = await getFamilyContext();
+  const { user, family, membership, displayName } = await getFamilyContext();
   const supabase = createClient();
 
   if (!user) {
     redirect("/login");
   }
-
-  const fullName =
-    (user.user_metadata?.full_name as string | undefined) ||
-    user.email?.split("@")[0] ||
-    "usuário";
 
   const familyId = family?.id;
   let onboardingState: string | null = null;
@@ -211,9 +199,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   let recentIntelligentDocuments: IntelligentDocumentRow[] = [];
   let peoplePreview: PersonPreviewRow[] = [];
   let upcomingTasks: TaskRow[] = [];
-  let timelineEvents: EventRow[] = [];
+  let timelineEvents: TimelineEntry[] = [];
 
-  const calendarStatus = await getGoogleCalendarIntegrationStatus();
+  const calendarStatus = await getGoogleCalendarIntegrationStatus(displayName);
   calendarConnected = calendarStatus.connected;
   calendarMessage = calendarStatus.message;
 
@@ -231,7 +219,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       { data: medsData },
       { data: examsData },
       { data: tasksData },
-      { data: eventsData },
+      timelineResult,
       legalCasesResult,
     ] = await Promise.all([
       supabase
@@ -297,12 +285,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         .eq("family_id", familyId)
         .order("due_date", { ascending: true, nullsFirst: false })
         .limit(10),
-      supabase
-        .from("events")
-        .select("id, event_type, affected_entity_type, occurred_at")
-        .eq("family_id", familyId)
-        .order("occurred_at", { ascending: false })
-        .limit(5),
+      loadTimelineEntries({ familyId, limit: 5 }),
       supabase
         .from("legal_cases")
         .select("status, expected_value")
@@ -369,7 +352,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       (task) => task.status === "Aguardando terceiro"
     ).length;
 
-    timelineEvents = (eventsData ?? []) as EventRow[];
+    timelineEvents = timelineResult;
 
     if (!legalCasesResult.error) {
       const legalCases = (legalCasesResult.data ?? []) as LegalCaseMetricRow[];
@@ -411,7 +394,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             </div>
             <p className="text-sm capitalize text-slate-500">{formatToday()}</p>
             <h1 className="mt-2 text-2xl font-semibold text-slate-900 md:text-3xl">
-              Bom dia, {fullName}.
+              Bom dia, {displayName}.
             </h1>
             <p className="mt-1 text-slate-600">{family?.name ?? "Sem familia vinculada"}</p>
           </div>
@@ -737,9 +720,28 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             ) : (
               <ul className="mt-4 space-y-3">
                 {timelineEvents.map((event) => (
-                  <li key={event.id} className="rounded-xl border border-slate-200 p-3 bg-slate-50">
-                    <p className="text-sm font-medium text-slate-900">{eventLabel(event)}</p>
-                    <p className="text-xs text-slate-500 mt-1">{formatDateTime(event.occurred_at)}</p>
+                  <li
+                    key={event.id}
+                    className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3"
+                  >
+                    <span aria-hidden="true" className="text-lg">
+                      {event.icon}
+                    </span>
+                    <div className="min-w-0">
+                      {event.href ? (
+                        <Link
+                          href={event.href}
+                          className="text-sm font-medium text-slate-900 underline decoration-slate-300 underline-offset-4 hover:decoration-slate-700"
+                        >
+                          {event.message}
+                        </Link>
+                      ) : (
+                        <p className="text-sm font-medium text-slate-900">{event.message}</p>
+                      )}
+                      <p className="mt-1 text-xs text-slate-500">
+                        {formatDateTime(event.occurredAt)}
+                      </p>
+                    </div>
                   </li>
                 ))}
               </ul>

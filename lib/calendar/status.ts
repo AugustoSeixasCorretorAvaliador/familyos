@@ -142,8 +142,9 @@ async function fetchEventsFromCalendar(
   };
 }
 
-export async function getGoogleCalendarIntegrationStatus(): Promise<CalendarIntegrationStatus> {
-  const supabase = createClient();
+export async function getGoogleCalendarIntegrationStatus(
+  displayName: string
+): Promise<CalendarIntegrationStatus> {
   const token = await getGoogleAccessToken();
 
   if (!token) {
@@ -164,24 +165,10 @@ export async function getGoogleCalendarIntegrationStatus(): Promise<CalendarInte
     };
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const { data: profile } = await supabase
-    .from("user_profiles")
-    .select("display_name")
-    .eq("user_id", user?.id ?? "")
-    .maybeSingle();
-
-  const displayName = profile?.display_name?.trim();
-
   return {
     connected: true,
     provider: "google_calendar",
-    message: displayName
-      ? `Google Calendar conectado para ${displayName}.`
-      : "Google Calendar conectado com sucesso.",
+    message: `Google Calendar conectado para ${displayName}.`,
   };
 }
 

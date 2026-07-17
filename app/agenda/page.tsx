@@ -25,13 +25,13 @@ function formatCalendarDate(value: string, allDay: boolean) {
 }
 
 export default async function AgendaPage() {
-  const { user, family } = await getFamilyContext();
+  const { user, family, displayName } = await getFamilyContext();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
 
   const [status, upcoming] = await Promise.all([
-    getGoogleCalendarIntegrationStatus(),
+    getGoogleCalendarIntegrationStatus(displayName),
     getGoogleCalendarUpcomingEvents(8),
   ]);
 

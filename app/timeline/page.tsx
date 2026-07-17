@@ -1,17 +1,8 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { MainNav } from "@/app/components/main-nav";
 import { getFamilyContext } from "@/lib/family/context";
-import { createClient } from "@/lib/supabase/server";
-
-type TimelineRow = {
-  id: string;
-  event_type: string;
-  source: string;
-  affected_entity_type: string;
-  affected_entity_id: string | null;
-  occurred_at: string;
-  priority: string;
-};
+import { loadTimelineEntries } from "@/lib/timeline/load-events";
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("pt-BR", {
@@ -30,21 +21,20 @@ function priorityClass(priority: string) {
   return "text-emerald-700 bg-emerald-50 border-emerald-200";
 }
 
+function priorityLabel(priority: string) {
+  if (priority === "critical") return "Crítica";
+  if (priority === "high") return "Alta";
+  if (priority === "medium") return "Média";
+  return "Informativa";
+}
+
 export default async function TimelinePage() {
   const { user, family } = await getFamilyContext();
-  const supabase = createClient();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
 
-  const { data } = await supabase
-    .from("events")
-    .select("id, event_type, source, affected_entity_type, affected_entity_id, occurred_at, priority")
-    .eq("family_id", family.id)
-    .order("occurred_at", { ascending: false })
-    .limit(200);
-
-  const rows = (data ?? []) as TimelineRow[];
+  const rows = await loadTimelineEntries({ familyId: family.id, limit: 200 });
 
   return (
     <main className="min-h-screen bg-slate-50 p-6 md:p-10">
@@ -64,22 +54,41 @@ export default async function TimelinePage() {
             <ul className="space-y-3">
               {rows.map((row) => (
                 <li key={row.id} className="rounded-xl border border-slate-200 p-4">
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                    <div>
-                      <p className="font-medium text-slate-900">{row.event_type}</p>
-                      <p className="text-sm text-slate-600">
-                        Entidade: {row.affected_entity_type}
-                        {row.affected_entity_id ? ` (${row.affected_entity_id})` : ""}
+                  <div className="flex items-start gap-3">
+                    <span
+                      aria-hidden="true"
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xl"
+                    >
+                      {row.icon}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {row.moduleLabel} · {row.entityLabel}
+                          </p>
+                          {row.href ? (
+                            <Link
+                              href={row.href}
+                              className="mt-1 block font-medium text-slate-900 underline decoration-slate-300 underline-offset-4 hover:decoration-slate-700"
+                            >
+                              {row.message}
+                            </Link>
+                          ) : (
+                            <p className="mt-1 font-medium text-slate-900">{row.message}</p>
+                          )}
+                        </div>
+                        <span
+                          className={`inline-flex w-fit shrink-0 rounded-full border px-2 py-1 text-xs ${priorityClass(row.priority)}`}
+                        >
+                          {priorityLabel(row.priority)}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-500">
+                        {formatDateTime(row.occurredAt)}
                       </p>
                     </div>
-                    <div className="text-right">
-                      <span className={`inline-flex rounded-full border px-2 py-1 text-xs ${priorityClass(row.priority)}`}>
-                        {row.priority}
-                      </span>
-                      <p className="text-xs text-slate-500 mt-1">{formatDateTime(row.occurred_at)}</p>
-                    </div>
                   </div>
-                  <p className="text-xs text-slate-500 mt-2">Origem: {row.source}</p>
                 </li>
               ))}
             </ul>

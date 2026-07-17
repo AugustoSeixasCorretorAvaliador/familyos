@@ -6,7 +6,7 @@ import { getFamilyContext } from "@/lib/family/context";
 export const dynamic = "force-dynamic";
 
 export default async function AIExecutivePage() {
-  const { user, family } = await getFamilyContext();
+  const { user, family, displayName } = await getFamilyContext();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
@@ -24,7 +24,9 @@ export default async function AIExecutivePage() {
               <h1 className="mt-2 text-3xl font-bold tracking-tight text-[#061638] sm:text-4xl">
                 AI Executive
               </h1>
-              <p className="mt-3 text-lg text-slate-600">O que merece sua atenção hoje?</p>
+              <p className="mt-3 text-lg text-slate-600">
+                Olá, {displayName}. O que merece sua atenção hoje?
+              </p>
               <p className="mt-2 text-sm text-slate-500">
                 Consulta somente leitura, protegida pela sua sessão e pelas regras RLS da família.
               </p>
