@@ -15,7 +15,10 @@ export async function GET(request: NextRequest) {
 
   const code = request.nextUrl.searchParams.get("code");
   const next = request.nextUrl.searchParams.get("next") ?? "/dashboard";
-  const safeNext = next.startsWith("/") ? next : "/dashboard";
+  const safeNext =
+    next === "/dashboard" || /^\/convite\/[a-f0-9]{64}$/i.test(next)
+      ? next
+      : "/dashboard";
 
   const response = NextResponse.redirect(new URL(safeNext, request.url));
 

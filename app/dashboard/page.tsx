@@ -1,7 +1,10 @@
 import Image from "next/image";
 import Link from "next/link";
 import { MainNav } from "@/app/components/main-nav";
-import { bootstrapSeixasFamily } from "@/app/dashboard/actions";
+import { SubmitButton } from "@/app/components/submit-button";
+import { bootstrapFamily } from "@/app/dashboard/actions";
+import { InvitationForm } from "@/app/dashboard/invitation-form";
+import { getActionErrorMessage } from "@/lib/action-feedback";
 import { getGoogleCalendarIntegrationStatus } from "@/lib/calendar/status";
 import { getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
@@ -68,6 +71,14 @@ type MedicationMetricRow = {
 type LegalCaseMetricRow = {
   status: string;
   expected_value: number | null;
+};
+
+type PageProps = {
+  searchParams: {
+    success?: string;
+    error?: string;
+    request_id?: string;
+  };
 };
 
 function startOfToday() {
@@ -150,8 +161,8 @@ function eventLabel(event: EventRow) {
   return `${event.event_type} - ${event.affected_entity_type}`;
 }
 
-export default async function DashboardPage() {
-  const { user, family } = await getFamilyContext();
+export default async function DashboardPage({ searchParams }: PageProps) {
+  const { user, family, membership } = await getFamilyContext();
   const supabase = createClient();
 
   if (!user) {
@@ -164,6 +175,18 @@ export default async function DashboardPage() {
     "usuário";
 
   const familyId = family?.id;
+  let onboardingState: string | null = null;
+  let pendingInvitationFamily: string | null = null;
+
+  if (!familyId) {
+    const [stateResult, invitationResult] = await Promise.all([
+      supabase.rpc("get_family_onboarding_state"),
+      supabase.rpc("get_pending_family_invitation"),
+    ]);
+    onboardingState = (stateResult.data as string | null) ?? null;
+    pendingInvitationFamily =
+      (invitationResult.data?.[0]?.family_name as string | undefined) ?? null;
+  }
 
   let peopleCount = 0;
   let propertiesCount = 0;
@@ -394,22 +417,102 @@ export default async function DashboardPage() {
           </div>
         </header>
 
-        {!familyId && (
-          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-amber-900">Inicializacao do SeixasOS MVP 0.1</h2>
-            <p className="mt-2 text-amber-800">
-              Nenhuma familia vinculada ainda. Clique abaixo para criar a Familia Seixas e vincular seu usuario.
+        {(searchParams.success || searchParams.error) && (
+          <section
+            className={`rounded-2xl border p-4 shadow-sm ${
+              searchParams.error
+                ? "border-red-200 bg-red-50 text-red-800"
+                : "border-emerald-200 bg-emerald-50 text-emerald-800"
+            }`}
+          >
+            <p>
+              {searchParams.error
+                ? getActionErrorMessage(searchParams.error)
+                : "Operacao concluida com sucesso."}
             </p>
-            <form action={bootstrapSeixasFamily} className="mt-4">
-              <button
-                type="submit"
-                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800"
-              >
-                Criar e vincular Familia Seixas
-              </button>
-            </form>
+            {searchParams.request_id && (
+              <p className="mt-1 text-xs opacity-75">Codigo de atendimento: {searchParams.request_id}</p>
+            )}
           </section>
         )}
+
+        {!familyId && (
+          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-amber-900">Voce ainda nao pertence a nenhuma familia</h2>
+
+            {onboardingState === "pending_invitation" ? (
+              <p className="mt-2 text-amber-800">
+                Voce possui um convite pendente
+                {pendingInvitationFamily ? ` para ${pendingInvitationFamily}` : ""}. Abra o link de uso unico enviado pelo administrador.
+              </p>
+            ) : onboardingState === "existing_person_requires_invitation" ? (
+              <p className="mt-2 text-amber-800">
+                Seu cadastro familiar ja existe. Solicite ao owner ou administrador um convite seguro ou a regularizacao do seu acesso.
+              </p>
+            ) : onboardingState === "eligible_to_create" ? (
+              <>
+                <p className="mt-2 text-amber-800">
+                  Se esta e a primeira conta da sua familia, crie agora o nucleo familiar. Voce sera o owner.
+                </p>
+                <form action={bootstrapFamily} className="mt-4 flex flex-col gap-3 sm:flex-row">
+                  <input
+                    name="family_name"
+                    required
+                    placeholder="Nome da familia"
+                    className="min-w-0 flex-1 rounded-xl border border-amber-300 bg-white px-3 py-2"
+                  />
+                  <SubmitButton
+                    label="Criar nova familia"
+                    pendingLabel="Criando..."
+                    className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                  />
+                </form>
+              </>
+            ) : (
+              <p className="mt-2 text-amber-800">
+                Nao foi possivel determinar o estado do seu cadastro. Tente novamente ou informe o administrador.
+              </p>
+            )}
+          </section>
+        )}
+
+        {familyId && (membership?.role === "owner" || membership?.role === "admin") && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Convidar familiar</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              O e-mail precisa corresponder exatamente a uma pessoa ja cadastrada nesta familia.
+            </p>
+            <InvitationForm />
+          </section>
+        )}
+
+        <section className="overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-[#061638] via-[#083f86] to-[#6b2fcf] p-6 text-white shadow-sm sm:p-8">
+          <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr] lg:items-center">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-200">
+                Inteligência familiar segura
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold">AI Executive</h2>
+              <p className="mt-3 max-w-xl text-sm leading-6 text-blue-50">
+                Consulte riscos, pendências e próximos passos com base apenas nos dados autorizados da sua família.
+              </p>
+              <Link
+                href="/ai-executive"
+                className="mt-5 inline-flex rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-[#075fc7] shadow-sm transition hover:bg-blue-50"
+              >
+                Abrir AI Executive
+              </Link>
+            </div>
+            <div className="rounded-2xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
+              <p className="text-sm font-medium text-white">Experimente perguntar:</p>
+              <ul className="mt-3 space-y-2 text-sm text-blue-50">
+                <li>Como está minha família hoje?</li>
+                <li>Quais pendências são urgentes?</li>
+                <li>Quais documentos vencem em breve?</li>
+              </ul>
+            </div>
+          </div>
+        </section>
 
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <article className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

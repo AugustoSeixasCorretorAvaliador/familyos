@@ -19,11 +19,16 @@ export default function LoginPage() {
     }
 
     const supabase = createClient();
+    const invitationToken = new URLSearchParams(window.location.search).get("invite");
+    const nextPath =
+      invitationToken && /^[a-f0-9]{64}$/i.test(invitationToken)
+        ? `/convite/${invitationToken}`
+        : "/dashboard";
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
       },
     });
 

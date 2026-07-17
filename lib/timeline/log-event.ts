@@ -15,7 +15,7 @@ type LogTimelineEventInput = {
 export async function logTimelineEvent(input: LogTimelineEventInput) {
   try {
     const supabase = createClient();
-    await supabase.from("events").insert({
+    const { error } = await supabase.from("events").insert({
       family_id: input.familyId,
       event_type: input.eventType,
       source: input.source ?? "app",
@@ -28,7 +28,18 @@ export async function logTimelineEvent(input: LogTimelineEventInput) {
       previous_state: input.previousState ?? null,
       occurred_at: new Date().toISOString(),
     });
-  } catch {
+    if (error) throw error;
+  } catch (error) {
     // Timeline logging should not block primary CRUD actions.
+    console.error(
+      "[familyos_timeline_error]",
+      JSON.stringify({
+        family_id: input.familyId,
+        event_type: input.eventType,
+        affected_entity_type: input.affectedEntityType,
+        affected_entity_id: input.affectedEntityId ?? null,
+        error_message: error instanceof Error ? error.message : String(error),
+      })
+    );
   }
 }

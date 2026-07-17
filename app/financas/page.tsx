@@ -1,15 +1,18 @@
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { MainNav } from "@/app/components/main-nav";
+import { SubmitButton } from "@/app/components/submit-button";
 import { createAccount, deleteAccount, updateAccount } from "@/app/financas/actions";
 import { SaldoCell } from "@/app/financas/saldo-cell";
-import { getFamilyContext } from "@/lib/family/context";
+import { getActionErrorMessage } from "@/lib/action-feedback";
+import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
   searchParams: {
     success?: string;
     error?: string;
+    request_id?: string;
   };
 };
 
@@ -46,7 +49,8 @@ function toCurrency(value: number) {
 }
 
 export default async function FinancasPage({ searchParams }: PageProps) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -107,7 +111,7 @@ export default async function FinancasPage({ searchParams }: PageProps) {
             }`}
           >
             {searchParams.error
-              ? "Nao foi possivel concluir a operacao de contas."
+              ? getActionErrorMessage(searchParams.error, searchParams.request_id)
               : "Operacao concluida com sucesso."}
           </section>
         )}
@@ -132,9 +136,10 @@ export default async function FinancasPage({ searchParams }: PageProps) {
             <input name="data_atualizacao" type="date" className="rounded-xl border border-slate-300 px-3 py-2" />
             <textarea name="observacoes" placeholder="Observacoes" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" rows={3} />
             <div className="md:col-span-2">
-              <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">
-                Salvar conta
-              </button>
+              <SubmitButton
+                label="Salvar conta"
+                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+              />
             </div>
           </form>
         </section>
@@ -189,20 +194,23 @@ export default async function FinancasPage({ searchParams }: PageProps) {
                           rows={2}
                         />
                         <div className="md:col-span-2">
-                          <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">
-                            Salvar alteracoes
-                          </button>
+                          <SubmitButton
+                            label="Salvar alteracoes"
+                            className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+                          />
                         </div>
                       </form>
 
-                      <form action={deleteAccount}>
-                        <input type="hidden" name="account_id" value={account.id} />
-                        <ConfirmSubmitButton
-                          label="Excluir conta"
-                          confirmMessage="Deseja realmente excluir esta conta?"
-                          className="rounded-xl border border-red-300 text-red-700 px-4 py-2 text-sm font-medium hover:bg-red-50"
-                        />
-                      </form>
+                      {canAdminFamily(context) && (
+                        <form action={deleteAccount}>
+                          <input type="hidden" name="account_id" value={account.id} />
+                          <ConfirmSubmitButton
+                            label="Excluir conta"
+                            confirmMessage="Deseja realmente excluir esta conta?"
+                            className="rounded-xl border border-red-300 text-red-700 px-4 py-2 text-sm font-medium hover:bg-red-50"
+                          />
+                        </form>
+                      )}
                     </div>
                   </details>
                 );

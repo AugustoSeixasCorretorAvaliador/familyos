@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { MainNav } from "@/app/components/main-nav";
+import { SubmitButton } from "@/app/components/submit-button";
 import {
   createDoctor,
   createHealthExam,
@@ -12,13 +13,15 @@ import {
   updateHealthExamStatus,
   updateMedicationStatus,
 } from "@/app/saude/actions";
-import { getFamilyContext } from "@/lib/family/context";
+import { getActionErrorMessage } from "@/lib/action-feedback";
+import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
   searchParams: {
     success?: string;
     error?: string;
+    request_id?: string;
   };
 };
 
@@ -84,7 +87,8 @@ function getExamStatus(exam: ExamRow) {
 }
 
 export default async function SaudePage({ searchParams }: PageProps) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -157,7 +161,7 @@ export default async function SaudePage({ searchParams }: PageProps) {
             }`}
           >
             {searchParams.error
-              ? "Nao foi possivel concluir a operacao de saude."
+              ? getActionErrorMessage(searchParams.error, searchParams.request_id)
               : "Operacao concluida com sucesso."}
           </section>
         )}
@@ -181,9 +185,10 @@ export default async function SaudePage({ searchParams }: PageProps) {
             <input name="address" placeholder="Endereco" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
             <textarea name="notes" placeholder="Observacoes" rows={2} className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
             <div className="md:col-span-2">
-              <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">
-                Salvar medico
-              </button>
+              <SubmitButton
+                label="Salvar medico"
+                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+              />
             </div>
           </form>
 
@@ -199,14 +204,16 @@ export default async function SaudePage({ searchParams }: PageProps) {
                       {doctor.specialty ?? "Sem especialidade"} | Paciente: {doctor.people ? `${doctor.people.first_name} ${doctor.people.last_name}` : "Nao informado"}
                     </p>
                   </div>
-                  <form action={deleteDoctor}>
-                    <input type="hidden" name="id" value={doctor.id} />
-                    <ConfirmSubmitButton
-                      label="Excluir"
-                      confirmMessage="Deseja excluir este medico?"
-                      className="rounded-xl border border-red-300 text-red-700 px-3 py-1 text-sm hover:bg-red-50"
-                    />
-                  </form>
+                  {canAdminFamily(context) && (
+                    <form action={deleteDoctor}>
+                      <input type="hidden" name="id" value={doctor.id} />
+                      <ConfirmSubmitButton
+                        label="Excluir"
+                        confirmMessage="Deseja excluir este medico?"
+                        className="rounded-xl border border-red-300 text-red-700 px-3 py-1 text-sm hover:bg-red-50"
+                      />
+                    </form>
+                  )}
                 </div>
               ))
             )}
@@ -245,9 +252,10 @@ export default async function SaudePage({ searchParams }: PageProps) {
             </select>
             <textarea name="notes" placeholder="Observacoes" rows={2} className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
             <div className="md:col-span-2">
-              <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">
-                Salvar medicamento
-              </button>
+              <SubmitButton
+                label="Salvar medicamento"
+                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+              />
             </div>
           </form>
 
@@ -271,18 +279,22 @@ export default async function SaudePage({ searchParams }: PageProps) {
                         <option>Suspenso</option>
                         <option>Encerrado</option>
                       </select>
-                      <button type="submit" className="ml-2 rounded-xl border border-slate-300 px-3 py-1 text-sm">
-                        Atualizar
-                      </button>
-                    </form>
-                    <form action={deleteMedication}>
-                      <input type="hidden" name="id" value={medication.id} />
-                      <ConfirmSubmitButton
-                        label="Excluir"
-                        confirmMessage="Deseja excluir este medicamento?"
-                        className="rounded-xl border border-red-300 text-red-700 px-3 py-1 text-sm hover:bg-red-50"
+                      <SubmitButton
+                        label="Atualizar"
+                        pendingLabel="Atualizando..."
+                        className="ml-2 rounded-xl border border-slate-300 px-3 py-1 text-sm disabled:opacity-60"
                       />
                     </form>
+                    {canAdminFamily(context) && (
+                      <form action={deleteMedication}>
+                        <input type="hidden" name="id" value={medication.id} />
+                        <ConfirmSubmitButton
+                          label="Excluir"
+                          confirmMessage="Deseja excluir este medicamento?"
+                          className="rounded-xl border border-red-300 text-red-700 px-3 py-1 text-sm hover:bg-red-50"
+                        />
+                      </form>
+                    )}
                   </div>
                 </div>
               ))
@@ -317,9 +329,10 @@ export default async function SaudePage({ searchParams }: PageProps) {
             <input name="file" type="file" accept="application/pdf" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
             <textarea name="notes" placeholder="Observacoes" rows={2} className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
             <div className="md:col-span-2">
-              <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">
-                Salvar exame
-              </button>
+              <SubmitButton
+                label="Salvar exame"
+                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+              />
             </div>
           </form>
 
@@ -354,18 +367,22 @@ export default async function SaudePage({ searchParams }: PageProps) {
                         <option>Resultado recebido</option>
                         <option>Atrasado</option>
                       </select>
-                      <button type="submit" className="ml-2 rounded-xl border border-slate-300 px-3 py-1 text-sm">
-                        Atualizar
-                      </button>
-                    </form>
-                    <form action={deleteHealthExam}>
-                      <input type="hidden" name="id" value={exam.id} />
-                      <ConfirmSubmitButton
-                        label="Excluir"
-                        confirmMessage="Deseja excluir este exame?"
-                        className="rounded-xl border border-red-300 text-red-700 px-3 py-1 text-sm hover:bg-red-50"
+                      <SubmitButton
+                        label="Atualizar"
+                        pendingLabel="Atualizando..."
+                        className="ml-2 rounded-xl border border-slate-300 px-3 py-1 text-sm disabled:opacity-60"
                       />
                     </form>
+                    {canAdminFamily(context) && (
+                      <form action={deleteHealthExam}>
+                        <input type="hidden" name="id" value={exam.id} />
+                        <ConfirmSubmitButton
+                          label="Excluir"
+                          confirmMessage="Deseja excluir este exame?"
+                          className="rounded-xl border border-red-300 text-red-700 px-3 py-1 text-sm hover:bg-red-50"
+                        />
+                      </form>
+                    )}
                   </div>
                 </div>
               ))

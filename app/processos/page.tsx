@@ -1,14 +1,17 @@
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { MainNav } from "@/app/components/main-nav";
+import { SubmitButton } from "@/app/components/submit-button";
 import { createLegalCase, deleteLegalCase, updateLegalCase } from "@/app/processos/actions";
-import { getFamilyContext } from "@/lib/family/context";
+import { getActionErrorMessage } from "@/lib/action-feedback";
+import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
   searchParams: {
     success?: string;
     error?: string;
+    request_id?: string;
     status?: string;
   };
 };
@@ -52,7 +55,8 @@ function formatCurrency(value: number | null) {
 }
 
 export default async function ProcessosPage({ searchParams }: PageProps) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
@@ -101,7 +105,9 @@ export default async function ProcessosPage({ searchParams }: PageProps) {
                 : "border-emerald-200 bg-emerald-50 text-emerald-700"
             }`}
           >
-            {searchParams.error ? "Nao foi possivel concluir a operacao." : "Operacao concluida com sucesso."}
+            {searchParams.error
+              ? getActionErrorMessage(searchParams.error, searchParams.request_id)
+              : "Operacao concluida com sucesso."}
           </section>
         )}
 
@@ -131,7 +137,10 @@ export default async function ProcessosPage({ searchParams }: PageProps) {
             <input name="last_update_date" type="date" className="rounded-xl border border-slate-300 px-3 py-2" />
             <textarea name="notes" rows={2} placeholder="Observacoes" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
             <div className="md:col-span-2">
-              <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Salvar processo</button>
+              <SubmitButton
+                label="Salvar processo"
+                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+              />
             </div>
           </form>
         </section>
@@ -199,18 +208,23 @@ export default async function ProcessosPage({ searchParams }: PageProps) {
                       <input name="last_update_date" type="date" defaultValue={legalCase.last_update_date ?? ""} className="rounded-xl border border-slate-300 px-3 py-2" />
                       <textarea name="notes" rows={2} defaultValue={legalCase.notes ?? ""} className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
                       <div className="md:col-span-2">
-                        <button type="submit" className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Salvar alteracoes</button>
+                        <SubmitButton
+                          label="Salvar alteracoes"
+                          className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
+                        />
                       </div>
                     </form>
 
-                    <form action={deleteLegalCase}>
-                      <input type="hidden" name="id" value={legalCase.id} />
-                      <ConfirmSubmitButton
-                        label="Excluir processo"
-                        confirmMessage="Deseja realmente excluir este processo?"
-                        className="rounded-xl border border-red-300 text-red-700 px-3 py-1 text-sm hover:bg-red-50"
-                      />
-                    </form>
+                    {canAdminFamily(context) && (
+                      <form action={deleteLegalCase}>
+                        <input type="hidden" name="id" value={legalCase.id} />
+                        <ConfirmSubmitButton
+                          label="Excluir processo"
+                          confirmMessage="Deseja realmente excluir este processo?"
+                          className="rounded-xl border border-red-300 text-red-700 px-3 py-1 text-sm hover:bg-red-50"
+                        />
+                      </form>
+                    )}
                   </div>
                 </details>
               ))}
