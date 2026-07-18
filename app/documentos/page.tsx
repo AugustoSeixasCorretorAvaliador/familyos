@@ -3,6 +3,10 @@ import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { MainNav } from "@/app/components/main-nav";
 import { DocumentUploadForm } from "@/app/documentos/document-upload-form";
+import {
+  buildDocumentSearchFilter,
+  normalizeDocumentOwnerFilter,
+} from "@/lib/document-intake/search";
 import { getDocumentProcessingLabel } from "@/lib/document-intake/status";
 import { SubmitButton } from "@/app/components/submit-button";
 import { deleteDocument, updateDocument } from "@/app/documentos/actions";
@@ -16,6 +20,8 @@ type PageProps = {
     error?: string;
     request_id?: string;
     edit?: string;
+    q?: string;
+    vinculo?: string;
   };
 };
 
@@ -97,21 +103,42 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
 
-  const [{ data: peopleData }, { data: docsData }] = await Promise.all([
+  const searchText = searchParams.q?.trim() ?? "";
+  const selectedOwnerId = normalizeDocumentOwnerFilter(
+    searchParams.vinculo
+  );
+  const searchFilter = buildDocumentSearchFilter(searchText);
+
+  let documentsQuery = supabase
+    .from("documents")
+    .select(
+      "id, title, document_type, document_number, issuing_authority, country, issue_date, expiration_date, file_name, storage_path, owner_person_id, processing_status, review_required, ocr_confidence, metadata, people:owner_person_id(first_name, last_name)"
+    )
+    .eq("family_id", family.id)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false });
+
+  if (searchFilter) {
+    documentsQuery = documentsQuery.or(searchFilter);
+  }
+  if (selectedOwnerId) {
+    documentsQuery = documentsQuery.eq(
+      "owner_person_id",
+      selectedOwnerId
+    );
+  }
+
+  const [
+    { data: peopleData },
+    { data: docsData, error: documentsError },
+  ] = await Promise.all([
     supabase
       .from("people")
       .select("id, first_name, last_name, family_role")
       .eq("family_id", family.id)
       .is("deleted_at", null)
       .order("first_name", { ascending: true }),
-    supabase
-      .from("documents")
-      .select(
-        "id, title, document_type, document_number, issuing_authority, country, issue_date, expiration_date, file_name, storage_path, owner_person_id, processing_status, review_required, ocr_confidence, metadata, people:owner_person_id(first_name, last_name)"
-      )
-      .eq("family_id", family.id)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false }),
+    documentsQuery,
   ]);
 
   const people = (peopleData ?? []) as PersonOption[];
@@ -157,10 +184,89 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
           outcome={searchParams.error ? "error" : searchParams.success ? "success" : null}
         />
 
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">
+              Encontrar documento
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Combine uma descrição livre com a pessoa, dependente ou pet.
+              Exemplo: Exame + Bella.
+            </p>
+          </div>
+          <form
+            method="get"
+            className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(220px,0.55fr)_auto_auto]"
+          >
+            <label className="min-w-0 text-sm font-medium text-slate-700">
+              Descrição livre
+              <input
+                name="q"
+                type="search"
+                maxLength={120}
+                defaultValue={searchText}
+                placeholder="Título, tipo, número, órgão ou arquivo"
+                className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-normal text-slate-900"
+              />
+            </label>
+            <label className="min-w-0 text-sm font-medium text-slate-700">
+              Vínculo
+              <select
+                name="vinculo"
+                defaultValue={selectedOwnerId}
+                className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-normal text-slate-900"
+              >
+                <option value="">Todas as pessoas e pets</option>
+                {people.map((person) => (
+                  <option key={person.id} value={person.id}>
+                    {person.first_name} {person.last_name}
+                    {person.family_role ? ` (${person.family_role})` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="submit"
+              className="self-end rounded-xl bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+            >
+              BUSCAR
+            </button>
+            <Link
+              href="/documentos"
+              className="self-end rounded-xl border border-slate-300 px-4 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              LIMPAR
+            </Link>
+          </form>
+        </section>
+
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">Lista de documentos</h2>
-          {documents.length === 0 ? (
-            <p className="mt-4 rounded-xl bg-slate-50 p-4 text-slate-600">Nenhum documento cadastrado.</p>
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-lg font-semibold text-slate-900">
+              Lista de documentos
+            </h2>
+            {!documentsError && (
+              <p className="text-sm text-slate-500">
+                {documents.length}{" "}
+                {documents.length === 1
+                  ? "documento encontrado"
+                  : "documentos encontrados"}
+              </p>
+            )}
+          </div>
+          {documentsError ? (
+            <p
+              role="alert"
+              className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700"
+            >
+              Não foi possível carregar os documentos. Tente novamente.
+            </p>
+          ) : documents.length === 0 ? (
+            <p className="mt-4 rounded-xl bg-slate-50 p-4 text-slate-600">
+              {searchFilter || selectedOwnerId
+                ? "Nenhum documento corresponde aos filtros informados."
+                : "Nenhum documento cadastrado."}
+            </p>
           ) : (
             <div className="mt-4 space-y-3">
               {documents.map((document) => (
