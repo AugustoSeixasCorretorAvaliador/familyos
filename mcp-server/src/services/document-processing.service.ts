@@ -131,6 +131,19 @@ export async function logTimeline(familyId: string, eventType: string, entityId:
 }
 
 export async function createDocumentAlerts(input: { familyId: string; documentId: string; title: string; expirationDate?: string | null }) {
+  const admin = createSupabaseAdminClient();
+
+  await admin
+    .from("alerts")
+    .update({
+      status: "archived",
+      resolved_at: new Date().toISOString(),
+    })
+    .eq("family_id", input.familyId)
+    .eq("related_entity_type", "documents")
+    .eq("related_entity_id", input.documentId)
+    .eq("status", "pending");
+
   if (!input.expirationDate) return;
   const expiry = new Date(input.expirationDate);
   const today = new Date();
@@ -139,12 +152,19 @@ export async function createDocumentAlerts(input: { familyId: string; documentId
   const diffDays = Math.floor((expiry.getTime() - today.getTime()) / 86400000);
   if (diffDays > 90) return;
 
-  await createSupabaseAdminClient().from("alerts").insert({
+  await admin.from("alerts").insert({
     family_id: input.familyId,
     related_entity_type: "documents",
     related_entity_id: input.documentId,
     severity: diffDays < 0 ? "critical" : diffDays <= 30 ? "high" : "medium",
-    title: diffDays < 0 ? `Documento vencido: ${input.title}` : `Documento vence em ${Math.max(diffDays, 0)} dias: ${input.title}`,
+    title:
+      diffDays < 0
+        ? `Documento vencido: ${input.title}`
+        : diffDays === 0
+          ? `Documento vence hoje: ${input.title}`
+          : diffDays === 1
+            ? `Documento vence amanhã: ${input.title}`
+            : `Documento vence em ${diffDays} dias: ${input.title}`,
     description: "Gerado automaticamente pelo MCP FamilyOS.",
     due_date: input.expirationDate,
     status: "pending",

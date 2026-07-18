@@ -147,6 +147,10 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
     const value = property.metadata?.valor_estimado;
     return sum + (typeof value === "number" ? value : 0);
   }, 0);
+  const alugueisMensaisTotal = properties.reduce((sum, property) => {
+    const value = property.metadata?.renda_mensal;
+    return sum + (typeof value === "number" ? value : 0);
+  }, 0);
   const successMessage =
     searchParams.success === "documents_archived"
       ? `${searchParams.count ?? "1"} arquivo(s) arquivado(s) e vinculado(s) ao imovel com sucesso.`
@@ -164,6 +168,9 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
             <p className="mt-1 text-slate-600">{family.name}</p>
             <p className="mt-2 text-sm text-slate-500">
               Patrimonio total nesta visualizacao: {toCurrency(patrimonioTotal)}
+            </p>
+            <p className="mt-1 text-sm text-slate-500">
+              Alugueis mensais nesta visualizacao: {toCurrency(alugueisMensaisTotal)}
             </p>
           </div>
         </header>

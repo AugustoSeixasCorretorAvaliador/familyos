@@ -6,6 +6,12 @@ import { bootstrapFamily } from "@/app/dashboard/actions";
 import { InvitationForm } from "@/app/dashboard/invitation-form";
 import { getActionErrorMessage } from "@/lib/action-feedback";
 import { getGoogleCalendarIntegrationStatus } from "@/lib/calendar/status";
+import {
+  buildDocumentExpirationAlerts,
+  mergeDashboardAlerts,
+  type DashboardAlert,
+  type DocumentExpirationRow,
+} from "@/lib/dashboard/document-alerts";
 import { getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -13,14 +19,6 @@ import {
   type TimelineEntry,
 } from "@/lib/timeline/load-events";
 import { redirect } from "next/navigation";
-
-type AlertRow = {
-  id: string;
-  title: string;
-  description: string | null;
-  due_date: string | null;
-  severity: string;
-};
 
 type TaskRow = {
   id: string;
@@ -37,9 +35,7 @@ type PersonPreviewRow = {
   family_role: string | null;
 };
 
-type DocumentStatusRow = {
-  expiration_date: string | null;
-};
+type DocumentStatusRow = DocumentExpirationRow;
 
 type IntelligentDocumentRow = {
   id: string;
@@ -200,6 +196,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   let peoplePreview: PersonPreviewRow[] = [];
   let upcomingTasks: TaskRow[] = [];
   let timelineEvents: TimelineEntry[] = [];
+  let alerts: DashboardAlert[] = [];
 
   const calendarStatus = await getGoogleCalendarIntegrationStatus(displayName);
   calendarConnected = calendarStatus.connected;
@@ -221,6 +218,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       { data: tasksData },
       timelineResult,
       legalCasesResult,
+      { data: storedAlertsData },
     ] = await Promise.all([
       supabase
         .from("people")
@@ -239,9 +237,10 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         .eq("status", "active"),
       supabase
         .from("documents")
-        .select("expiration_date")
+        .select("id, title, expiration_date")
         .eq("family_id", familyId)
-        .eq("status", "active"),
+        .eq("status", "active")
+        .is("deleted_at", null),
       supabase
         .from("documents")
         .select("id, title, processing_status, created_at")
@@ -290,12 +289,25 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         .from("legal_cases")
         .select("status, expected_value")
         .eq("family_id", familyId),
+      supabase
+        .from("alerts")
+        .select("id, title, description, due_date, severity")
+        .eq("family_id", familyId)
+        .eq("status", "pending")
+        .or("related_entity_type.is.null,related_entity_type.neq.documents")
+        .order("due_date", { ascending: true, nullsFirst: false })
+        .limit(5),
     ]);
 
     peopleCount = pCount ?? 0;
     propertiesCount = prCount ?? 0;
     documentsCount = dCount ?? 0;
-    documentStatus = computeDocumentStatus((docsMetricData ?? []) as DocumentStatusRow[]);
+    const currentDocuments = (docsMetricData ?? []) as DocumentStatusRow[];
+    documentStatus = computeDocumentStatus(currentDocuments);
+    alerts = mergeDashboardAlerts(
+      (storedAlertsData ?? []) as DashboardAlert[],
+      buildDocumentExpirationAlerts(currentDocuments)
+    );
     recentIntelligentDocuments = (recentDocsData ?? []) as IntelligentDocumentRow[];
     documentsAwaitingReview = recentIntelligentDocuments.filter(
       (document) => document.processing_status === "Aguardando conferencia"
@@ -363,15 +375,6 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       );
     }
   }
-
-  const { data: alertsData } = await supabase
-    .from("alerts")
-    .select("id, title, description, due_date, severity")
-    .eq("status", "pending")
-    .order("due_date", { ascending: true, nullsFirst: false })
-    .limit(5);
-
-  const alerts = (alertsData ?? []) as AlertRow[];
 
   return (
     <main className="min-h-screen bg-slate-50 p-6 md:p-10">

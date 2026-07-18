@@ -412,7 +412,10 @@ async function createDocumentAlerts(input: {
 
   await supabase
     .from("alerts")
-    .delete()
+    .update({
+      status: "archived",
+      resolved_at: new Date().toISOString(),
+    })
     .eq("family_id", input.familyId)
     .eq("related_entity_type", "documents")
     .eq("related_entity_id", input.documentId)
@@ -427,30 +430,32 @@ async function createDocumentAlerts(input: {
 
   const diffDays = Math.floor((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 
-  const rows: Array<{ severity: "low" | "medium" | "high" | "critical"; title: string }> = [];
+  if (diffDays > 90) return;
 
-  if (diffDays < 0) {
-    rows.push({ severity: "critical", title: `Documento vencido: ${input.title}` });
-  } else {
-    if (diffDays <= 90) rows.push({ severity: diffDays <= 30 ? "high" : "medium", title: `Documento vence em 90 dias: ${input.title}` });
-    if (diffDays <= 30) rows.push({ severity: diffDays <= 7 ? "critical" : "high", title: `Documento vence em 30 dias: ${input.title}` });
-    if (diffDays <= 7) rows.push({ severity: "critical", title: `Documento vence em 7 dias: ${input.title}` });
-  }
+  const title =
+    diffDays < 0
+      ? `Documento vencido: ${input.title}`
+      : diffDays === 0
+        ? `Documento vence hoje: ${input.title}`
+        : diffDays === 1
+          ? `Documento vence amanhã: ${input.title}`
+          : `Documento vence em ${diffDays} dias: ${input.title}`;
 
-  if (rows.length === 0) return;
-
-  await supabase.from("alerts").insert(
-    rows.map((row) => ({
-      family_id: input.familyId,
-      related_entity_type: "documents",
-      related_entity_id: input.documentId,
-      severity: row.severity,
-      title: row.title,
-      description: "Gerado automaticamente pelo processamento inteligente de documentos.",
-      due_date: input.expirationDate,
-      status: "pending",
-    }))
-  );
+  await supabase.from("alerts").insert({
+    family_id: input.familyId,
+    related_entity_type: "documents",
+    related_entity_id: input.documentId,
+    severity:
+      diffDays < 0 || diffDays <= 7
+        ? "critical"
+        : diffDays <= 30
+          ? "high"
+          : "medium",
+    title,
+    description: "Gerado automaticamente pelo processamento inteligente de documentos.",
+    due_date: input.expirationDate,
+    status: "pending",
+  });
 }
 
 export async function processDocumentPipeline(params: {
@@ -1305,6 +1310,9 @@ export async function updateDocument(formData: FormData) {
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) {
+    redirect("/documentos?error=permission_denied");
+  }
 
   const documentId = (formData.get("document_id") as string | null) || "";
   if (!documentId) redirect("/documentos?error=missing_id");
@@ -1373,6 +1381,12 @@ export async function updateDocument(formData: FormData) {
     );
   }
 
+  const title =
+    (formData.get("title") as string | null)?.trim() || "Documento";
+  const expirationDate = toDateOrNull(
+    (formData.get("expiration_date") as string | null) || null
+  );
+
   const { error } = await supabase
     .from("documents")
     .update({
@@ -1383,14 +1397,11 @@ export async function updateDocument(formData: FormData) {
       ),
       document_number:
         (formData.get("document_number") as string | null)?.trim() || null,
-      title:
-        (formData.get("title") as string | null)?.trim() || "Documento",
+      title,
       issue_date: toDateOrNull(
         (formData.get("issue_date") as string | null) || null
       ),
-      expiration_date: toDateOrNull(
-        (formData.get("expiration_date") as string | null) || null
-      ),
+      expiration_date: expirationDate,
       issuing_authority:
         (formData.get("issuing_authority") as string | null)?.trim() || null,
       country:
@@ -1405,6 +1416,13 @@ export async function updateDocument(formData: FormData) {
   if (error) {
     failDocument(error, user.id, family.id, "update", "update_failed");
   }
+
+  await createDocumentAlerts({
+    familyId: family.id,
+    documentId,
+    title,
+    expirationDate,
+  });
 
   await logTimelineEvent({
     familyId: family.id,
