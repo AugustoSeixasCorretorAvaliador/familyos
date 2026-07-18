@@ -124,3 +124,11 @@ export async function getFamilyContext(): Promise<FamilyContext> {
 export function canAdminFamily(context: FamilyContext) {
   return context.membership?.role === "owner" || context.membership?.role === "admin";
 }
+
+export function canEditFamily(context: FamilyContext) {
+  return (
+    context.membership?.role === "owner" ||
+    context.membership?.role === "admin" ||
+    context.membership?.role === "member"
+  );
+}

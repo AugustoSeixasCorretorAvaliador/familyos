@@ -465,6 +465,13 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             <p className="mt-2 text-sm text-slate-600">
               O e-mail precisa corresponder exatamente a uma pessoa ja cadastrada nesta familia.
             </p>
+            <p className="mt-1 text-sm text-slate-600">
+              Ainda nao cadastrou?{" "}
+              <Link href="/pessoas" className="font-medium text-blue-700 underline">
+                Cadastre a pessoa, dependente ou pet em Pessoas
+              </Link>
+              . Pets e dependentes sem login nao recebem convite.
+            </p>
             <InvitationForm />
           </section>
         )}

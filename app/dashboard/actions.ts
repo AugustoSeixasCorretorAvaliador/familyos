@@ -75,6 +75,14 @@ export async function createFamilyInvitation(
     p_role: role,
   });
 
+  if (error?.message === "unique_person_required") {
+    return {
+      error:
+        "Nenhuma pessoa única foi encontrada com este e-mail. Cadastre primeiro a pessoa em Pessoas. Pets e dependentes sem login não precisam de convite.",
+      invitationUrl: null,
+    };
+  }
+
   if (error || !data?.[0]?.invitation_token) {
     const result = reportActionError({
       error: error ?? new Error("invitation_token_missing"),

@@ -25,7 +25,7 @@ export function InvitationForm() {
         className="rounded-xl border border-slate-300 px-3 py-2"
       />
       <select name="role" defaultValue="member" className="rounded-xl border border-slate-300 px-3 py-2">
-        <option value="member">Membro</option>
+        <option value="member">Membro — adiciona e edita</option>
         <option value="admin">Administrador</option>
         <option value="viewer">Somente leitura</option>
       </select>
