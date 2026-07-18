@@ -12,6 +12,7 @@ import {
   updateProperty,
 } from "@/app/imoveis/actions";
 import { getActionErrorMessage } from "@/lib/action-feedback";
+import { getDocumentProcessingLabel } from "@/lib/document-intake/status";
 import { getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 
@@ -19,6 +20,7 @@ type PageProps = {
   searchParams: {
     situacao?: string;
     success?: string;
+    count?: string;
     error?: string;
     request_id?: string;
   };
@@ -64,6 +66,7 @@ type PropertyDocumentRow = {
   issue_date: string | null;
   expiration_date: string | null;
   processing_status: string;
+  metadata: Record<string, unknown> | null;
   created_at: string;
 };
 
@@ -115,7 +118,7 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
     supabase
       .from("documents")
       .select(
-        "id, property_id, title, document_type, file_name, issue_date, expiration_date, processing_status, created_at"
+        "id, property_id, title, document_type, file_name, issue_date, expiration_date, processing_status, metadata, created_at"
       )
       .eq("family_id", family.id)
       .not("property_id", "is", null)
@@ -144,6 +147,12 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
     const value = property.metadata?.valor_estimado;
     return sum + (typeof value === "number" ? value : 0);
   }, 0);
+  const successMessage =
+    searchParams.success === "documents_archived"
+      ? `${searchParams.count ?? "1"} arquivo(s) arquivado(s) e vinculado(s) ao imovel com sucesso.`
+      : searchParams.success === "updated"
+        ? "Alteracoes do imovel salvas com sucesso."
+        : "Operacao realizada com sucesso.";
 
   return (
     <main className="min-h-screen bg-slate-50 p-6 md:p-10">
@@ -169,7 +178,7 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
           >
             {searchParams.error
               ? getActionErrorMessage(searchParams.error, searchParams.request_id)
-              : "Operacao realizada com sucesso."}
+              : successMessage}
           </section>
         )}
 
@@ -317,7 +326,9 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                       </form>
 
                       <section className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4">
-                        <h3 className="font-medium text-slate-900">Documentos patrimoniais</h3>
+                        <h3 className="font-medium text-slate-900">
+                          Documentos patrimoniais ({documents.length})
+                        </h3>
                         <p className="mt-1 text-sm text-slate-600">
                           RGI, escritura, IPTU, bombeiros, laudemio, planta, convencao e seguro.
                         </p>
@@ -346,7 +357,8 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                             />
                             <span>
                               <strong className="block">Somente arquivar no historico</strong>
-                              Nao executar OCR agora. Os arquivos permanecem vinculados ao imovel e poderao ser revisados ou processados depois.
+                              Marque antes de clicar em Enviar e guardar. Nao use o botao Salvar alteracoes do imovel para concluir anexos.
+                              Os arquivos permanecem vinculados ao imovel e poderao ser revisados ou processados depois.
                             </span>
                           </label>
                           <select
@@ -406,7 +418,11 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                                 <div>
                                   <p className="text-sm font-medium text-slate-900">{document.title}</p>
                                   <p className="text-xs text-slate-500">
-                                    {document.document_type} · {document.processing_status}
+                                    {document.document_type} ·{" "}
+                                    {getDocumentProcessingLabel(
+                                      document.processing_status,
+                                      document.metadata
+                                    )}
                                   </p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">

@@ -5,6 +5,7 @@ import { MainNav } from "@/app/components/main-nav";
 import { confirmDocumentReview, processDocumentOCR, rejectDocumentReview } from "@/app/documentos/actions";
 import { OcrSubmitButton } from "@/app/documentos/[id]/revisar/ocr-submit-button";
 import { mergeOcrSuggestions } from "@/lib/document-intake/merge";
+import { getDocumentProcessingLabel } from "@/lib/document-intake/status";
 import { getFamilyContext } from "@/lib/family/context";
 import { getOcrConfig } from "@/lib/ocr/config";
 import { getOcrPublicMessage } from "@/lib/ocr/errors";
@@ -201,7 +202,13 @@ export default async function RevisarDocumentoPage({ params, searchParams }: Pag
             <div>
               <h1 className="text-2xl font-semibold text-slate-900">Revisar Documento</h1>
               <p className="mt-1 text-slate-600">{doc.title}</p>
-              <p className="text-sm text-slate-500">Status: {doc.processing_status}</p>
+              <p className="text-sm text-slate-500">
+                Status:{" "}
+                {getDocumentProcessingLabel(
+                  doc.processing_status,
+                  doc.metadata
+                )}
+              </p>
             </div>
             <Link href="/documentos" className="text-sm text-slate-700 underline hover:text-slate-900">
               Voltar para documentos

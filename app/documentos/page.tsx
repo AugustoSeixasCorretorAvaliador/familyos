@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { ExpandableCreateForm } from "@/app/components/expandable-create-form";
 import { MainNav } from "@/app/components/main-nav";
+import { getDocumentProcessingLabel } from "@/lib/document-intake/status";
 import { SubmitButton } from "@/app/components/submit-button";
 import { createDocument, deleteDocument, updateDocument } from "@/app/documentos/actions";
 import { getActionErrorMessage } from "@/lib/action-feedback";
@@ -213,7 +214,13 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
                     <div>
                       <p className="font-medium text-slate-900">{document.title}</p>
                       <p className="text-sm text-slate-600">{document.document_type}</p>
-                      <p className="text-xs text-slate-500 mt-1">Pipeline: {document.processing_status}</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Pipeline:{" "}
+                        {getDocumentProcessingLabel(
+                          document.processing_status,
+                          document.metadata
+                        )}
+                      </p>
                     </div>
                     <div className="text-right">
                       <p className="text-sm text-slate-600">{getDocValidityLabel(document.expiration_date)}</p>
