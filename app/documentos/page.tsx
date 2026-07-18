@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
-import { ExpandableCreateForm } from "@/app/components/expandable-create-form";
 import { MainNav } from "@/app/components/main-nav";
+import { DocumentUploadForm } from "@/app/documentos/document-upload-form";
 import { getDocumentProcessingLabel } from "@/lib/document-intake/status";
 import { SubmitButton } from "@/app/components/submit-button";
-import { createDocument, deleteDocument, updateDocument } from "@/app/documentos/actions";
+import { deleteDocument, updateDocument } from "@/app/documentos/actions";
 import { getActionErrorMessage } from "@/lib/action-feedback";
 import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
@@ -23,6 +23,7 @@ type PersonOption = {
   id: string;
   first_name: string;
   last_name: string;
+  family_role: string | null;
 };
 
 type DocumentRow = {
@@ -99,7 +100,7 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
   const [{ data: peopleData }, { data: docsData }] = await Promise.all([
     supabase
       .from("people")
-      .select("id, first_name, last_name")
+      .select("id, first_name, last_name, family_role")
       .eq("family_id", family.id)
       .is("deleted_at", null)
       .order("first_name", { ascending: true }),
@@ -143,59 +144,18 @@ export default async function DocumentosPage({ searchParams }: PageProps) {
           >
             {searchParams.error
               ? getActionErrorMessage(searchParams.error, searchParams.request_id)
-              : "Operacao concluida com sucesso."}
+              : searchParams.success === "archived"
+                ? "Documento arquivado com sucesso, sem executar o OCR."
+                : "Operacao concluida com sucesso."}
           </section>
         )}
 
-        <ExpandableCreateForm
-          id="create-document"
-          title="Novo documento inteligente"
-          buttonLabel="NOVO DOCUMENTO"
-          submitAction={createDocument}
-          encType="multipart/form-data"
+        <DocumentUploadForm
+          familyId={family.id}
+          people={people}
+          documentTypes={DOCUMENT_TYPES}
           outcome={searchParams.error ? "error" : searchParams.success ? "success" : null}
-          formClassName="grid grid-cols-1 gap-4 md:grid-cols-2"
-        >
-            <input
-              name="file"
-              type="file"
-              accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/tif"
-              className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2"
-            />
-            <p className="text-xs text-slate-500 md:col-span-2">
-              Envie ou fotografe primeiro para usar o OCR. Sem arquivo, informe ao menos o titulo e salve manualmente. Formatos: PDF, PNG, JPEG, WEBP, TIFF. Limite: 20MB.
-            </p>
-            <input name="title" placeholder="Titulo (opcional antes do OCR)" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <select name="document_type" className="rounded-xl border border-slate-300 px-3 py-2">
-              <option value="">Tipo</option>
-              {DOCUMENT_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
-            <select name="owner_person_id" className="rounded-xl border border-slate-300 px-3 py-2">
-              <option value="">Titular</option>
-              {people.map((person) => (
-                <option key={person.id} value={person.id}>
-                  {person.first_name} {person.last_name}
-                </option>
-              ))}
-            </select>
-            <input name="document_number" placeholder="Numero" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="issuing_authority" placeholder="Orgao emissor" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="country" defaultValue="Brasil" placeholder="Pais" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="issue_date" type="date" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="expiration_date" type="date" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <textarea name="observacoes" placeholder="Observacoes" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" rows={3} />
-            <div className="md:col-span-2">
-              <SubmitButton
-                label="Salvar documento"
-                pendingLabel="Enviando documento..."
-                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
-              />
-            </div>
-        </ExpandableCreateForm>
+        />
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">Lista de documentos</h2>

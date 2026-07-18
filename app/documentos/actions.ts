@@ -6,7 +6,14 @@ import { redirect } from "next/navigation";
 import { errorRedirectPath, reportActionError } from "@/lib/action-error";
 import type { ActionErrorCode } from "@/lib/action-feedback";
 import { suggestDocumentTitle } from "@/lib/document-intake/merge";
-import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
+import {
+  validateUploadedPropertyDocuments,
+} from "@/lib/document-intake/property-files";
+import {
+  canAdminFamily,
+  canEditFamily,
+  getFamilyContext,
+} from "@/lib/family/context";
 import { getOcrConfig } from "@/lib/ocr/config";
 import {
   OcrOperationalError,
@@ -739,6 +746,179 @@ export async function processDocumentOCR(formData: FormData) {
   );
 }
 
+export async function finalizeArchivedPersonDocument(formData: FormData) {
+  const context = await getFamilyContext();
+  const { user, family } = context;
+  const supabase = createClient();
+
+  if (!user || !family || !canEditFamily(context)) {
+    return { ok: false as const, code: "permission_denied" as const };
+  }
+
+  const title = (formData.get("title") as string | null)?.trim() || "";
+  const documentType =
+    (formData.get("document_type") as string | null)?.trim() || "";
+  const ownerPersonId =
+    (formData.get("owner_person_id") as string | null)?.trim() || "";
+  if (!title || !documentType || !ownerPersonId) {
+    return { ok: false as const, code: "required_fields" as const };
+  }
+
+  let uploadedValue: unknown;
+  try {
+    uploadedValue = JSON.parse(
+      (formData.get("uploaded_files") as string | null) || "null"
+    );
+  } catch {
+    return { ok: false as const, code: "invalid_file" as const };
+  }
+  const validation = validateUploadedPropertyDocuments(
+    uploadedValue,
+    family.id
+  );
+  if (!validation.ok) {
+    return { ok: false as const, code: validation.code };
+  }
+  if (validation.files.length !== 1) {
+    return { ok: false as const, code: "invalid_file" as const };
+  }
+
+  const { data: owner, error: ownerError } = await supabase
+    .from("people")
+    .select("id")
+    .eq("id", ownerPersonId)
+    .eq("family_id", family.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (ownerError || !owner) {
+    return { ok: false as const, code: "not_found" as const };
+  }
+
+  const file = validation.files[0];
+  let documentId = "";
+  try {
+    const downloaded = await supabase.storage
+      .from(BUCKET)
+      .download(file.storagePath);
+    if (downloaded.error || !downloaded.data) {
+      throw downloaded.error ?? new Error("storage_download_failed");
+    }
+    const bytes = new Uint8Array(await downloaded.data.arrayBuffer());
+    if (bytes.byteLength !== file.size) {
+      throw new Error("uploaded_file_size_mismatch");
+    }
+
+    const issueDate = toDateOrNull(
+      (formData.get("issue_date") as string | null) || null
+    );
+    const expirationDate = toDateOrNull(
+      (formData.get("expiration_date") as string | null) || null
+    );
+    const observacoes =
+      (formData.get("observacoes") as string | null)?.trim() || null;
+    const { data: document, error: documentError } = await supabase
+      .from("documents")
+      .insert({
+        family_id: family.id,
+        owner_person_id: ownerPersonId,
+        property_id: null,
+        document_type: documentType,
+        document_number:
+          (formData.get("document_number") as string | null)?.trim() || null,
+        title,
+        issue_date: issueDate,
+        expiration_date: expirationDate,
+        issuing_authority:
+          (formData.get("issuing_authority") as string | null)?.trim() ||
+          null,
+        country:
+          (formData.get("country") as string | null)?.trim() || "Brasil",
+        storage_provider: "supabase_storage",
+        storage_path: file.storagePath,
+        file_name: file.fileName,
+        mime_type: file.mimeType,
+        version: 1,
+        is_current: true,
+        status: "active",
+        processing_status: DOCUMENT_STATUS.confirmed,
+        review_required: false,
+        last_ocr_error: null,
+        metadata: {
+          observacoes,
+          intake_draft: false,
+          intake_source: "documentos.actions",
+          archived_without_ocr: true,
+          intake_error: null,
+        },
+      })
+      .select("id")
+      .single();
+    if (documentError || !document) {
+      throw documentError ?? new Error("document_not_created");
+    }
+    documentId = document.id;
+
+    const { error: versionError } = await supabase
+      .from("document_versions")
+      .insert({
+        family_id: family.id,
+        document_id: documentId,
+        version: 1,
+        storage_path: file.storagePath,
+        file_name: file.fileName,
+        mime_type: file.mimeType,
+        file_hash_sha256: sha256(bytes),
+        uploaded_by: user.id,
+        uploaded_at: new Date().toISOString(),
+        is_current: true,
+      });
+    if (versionError) throw versionError;
+
+    await createDocumentAlerts({
+      familyId: family.id,
+      documentId,
+      title,
+      expirationDate,
+    });
+    await logTimelineEvent({
+      familyId: family.id,
+      eventType: "document_archived",
+      affectedEntityType: "documents",
+      affectedEntityId: documentId,
+      source: "documentos.actions",
+    });
+  } catch (error) {
+    if (documentId) {
+      await supabase
+        .from("documents")
+        .delete()
+        .eq("id", documentId)
+        .eq("family_id", family.id);
+    }
+    await supabase.storage.from(BUCKET).remove([file.storagePath]);
+    const reported = reportActionError({
+      error,
+      userId: user.id,
+      familyId: family.id,
+      module: "documentos",
+      action: "finalize_archived_person_document",
+      fallback: "create_failed",
+    });
+    return {
+      ok: false as const,
+      code: reported.code,
+      requestId: reported.requestId,
+    };
+  }
+
+  revalidatePath("/documentos");
+  revalidatePath("/pessoas");
+  revalidatePath("/saude");
+  revalidatePath("/dashboard");
+  revalidatePath("/timeline");
+  return { ok: true as const, documentId };
+}
+
 export async function createDocument(formData: FormData) {
   const context = await getFamilyContext();
   const { user, family } = context;
@@ -746,9 +926,14 @@ export async function createDocument(formData: FormData) {
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) {
+    redirect("/documentos?error=permission_denied");
+  }
 
   const title = (formData.get("title") as string | null)?.trim() || null;
-  const documentType = normalizeDocumentType(formData.get("document_type") as string | null);
+  const requestedDocumentType =
+    (formData.get("document_type") as string | null)?.trim() || null;
+  const documentType = normalizeDocumentType(requestedDocumentType);
   const ownerPersonId = (formData.get("owner_person_id") as string | null) || null;
   const documentNumber = (formData.get("document_number") as string | null)?.trim() || null;
   const issueDate = toDateOrNull((formData.get("issue_date") as string | null) || null);
@@ -757,8 +942,20 @@ export async function createDocument(formData: FormData) {
   const country = (formData.get("country") as string | null)?.trim() || "Brasil";
   const observacoes = (formData.get("observacoes") as string | null)?.trim() || null;
   const file = formData.get("file");
+  const archiveWithoutOcr =
+    formData.get("archive_without_ocr") === "on";
+
+  if (
+    archiveWithoutOcr &&
+    (!title || !requestedDocumentType || !ownerPersonId)
+  ) {
+    redirect("/documentos?error=required_fields");
+  }
 
   if (!(file instanceof File) || file.size === 0) {
+    if (archiveWithoutOcr) {
+      redirect("/documentos?error=invalid_file");
+    }
     if (!title) redirect("/documentos?error=required_fields");
     const { data: manualDocument, error: manualError } = await supabase
       .from("documents")
@@ -819,6 +1016,19 @@ export async function createDocument(formData: FormData) {
   if (file.size > getOcrConfig().maxFileSizeBytes) redirect("/documentos?error=file_too_large");
   if (!ALLOWED_MIME_TYPES.has(file.type)) redirect("/documentos?error=unsupported_file_type");
 
+  if (archiveWithoutOcr && ownerPersonId) {
+    const { data: owner, error: ownerError } = await supabase
+      .from("people")
+      .select("id")
+      .eq("id", ownerPersonId)
+      .eq("family_id", family.id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (ownerError || !owner) {
+      redirect("/documentos?error=not_found");
+    }
+  }
+
   let intake: DocumentFileIntakeResult;
   try {
     intake = await intakeDocumentFile({
@@ -833,11 +1043,27 @@ export async function createDocument(formData: FormData) {
       expirationDate,
       issuingAuthority,
       country,
+      skipOcr: archiveWithoutOcr,
       metadata: { observacoes },
       source: "documentos.actions",
     });
   } catch (error) {
     failDocument(error, user.id, family.id, "intake", "create_failed");
+  }
+
+  if (archiveWithoutOcr) {
+    await createDocumentAlerts({
+      familyId: family.id,
+      documentId: intake.documentId,
+      title: title!,
+      expirationDate,
+    });
+    revalidatePath("/documentos");
+    revalidatePath("/pessoas");
+    revalidatePath("/saude");
+    revalidatePath("/dashboard");
+    revalidatePath("/timeline");
+    redirect("/documentos?success=archived");
   }
 
   const ocrResult = await processDocumentPipeline({

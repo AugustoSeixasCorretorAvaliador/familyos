@@ -20,6 +20,7 @@ type ExpandableCreateFormProps = {
   formClassName?: string;
   encType?: "application/x-www-form-urlencoded" | "multipart/form-data";
   outcome?: FormOutcome;
+  onSubmitCapture?: (event: FormEvent<HTMLFormElement>) => void;
 };
 
 const pendingDrafts = new Map<string, FormData>();
@@ -86,6 +87,7 @@ export function ExpandableCreateForm({
   formClassName = "",
   encType,
   outcome = null,
+  onSubmitCapture,
 }: ExpandableCreateFormProps) {
   const generatedId = useId();
   const regionId = `${id}-${generatedId.replace(/:/g, "")}`;
@@ -120,6 +122,7 @@ export function ExpandableCreateForm({
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     pendingDrafts.set(id, new FormData(event.currentTarget));
+    onSubmitCapture?.(event);
   }
 
   function handleCancel() {
