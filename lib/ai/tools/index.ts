@@ -1,12 +1,26 @@
 import type { Tool } from "openai/resources/responses/responses";
 import {
+  getDocumentExpirations,
   getDashboard,
+  getFamilyTimeline,
+  getFinancialSummary,
+  getHealthAlerts,
+  getPendingItems,
+  getPropertyPortfolioSummary,
   getRecentTimeline,
   listActiveCases,
+  listCalendarEvents,
+  listDocuments,
   listDueExams,
   listExpiringDocuments,
+  listFinancialAccounts,
+  listHealthRecords,
+  listLegalProcesses,
   listNextCalendarEvents,
   listOpenTasks,
+  listPeople,
+  listProperties,
+  listTasks,
 } from "@/lib/ai/tools/queries";
 import {
   EXECUTIVE_TOOL_NAMES,
@@ -43,6 +57,20 @@ export const executiveToolDefinitions: Tool[] = [
   tool("list_active_cases", "Lista processos ativos em formato resumido, sem número do processo ou notas sensíveis."),
   tool("get_recent_timeline", "Lista os eventos recentes da timeline sem estados brutos ou anexos."),
   tool("list_next_calendar_events", "Lista os próximos eventos autorizados do Google Calendar, sem links privados."),
+  tool("list_people", "Lista os familiares cadastrados, seus papéis e status, sem documentos, contatos ou identificadores."),
+  tool("list_properties", "Lista cada imóvel com endereço, proprietários, percentuais, valor integral, valor proporcional, dívida cadastrada, patrimônio líquido, aluguel e avisos de dados ausentes."),
+  tool("get_property_portfolio_summary", "Calcula de forma determinística os totais conhecidos da carteira imobiliária e sinaliza quando os totais são parciais."),
+  tool("list_documents", "Lista documentos da família com tipo, datas e status de processamento, sem números, arquivos ou caminhos privados."),
+  tool("get_document_expirations", "Lista documentos vencidos ou a vencer nos próximos 90 dias."),
+  tool("list_financial_accounts", "Lista instituições, tipos de conta e saldos conhecidos, sem agência, conta ou identificadores."),
+  tool("get_financial_summary", "Calcula o total conhecido dos saldos e informa contas sem valor cadastrado."),
+  tool("list_health_records", "Lista exames, categorias, datas e status sem laudos, notas clínicas ou diagnósticos."),
+  tool("get_health_alerts", "Lista exames pendentes, atrasados ou próximos do vencimento."),
+  tool("list_calendar_events", "Lista os próximos eventos autorizados do Google Calendar, sem links privados."),
+  tool("list_tasks", "Lista tarefas abertas com prioridade, status e vencimento."),
+  tool("list_legal_processes", "Lista processos ativos de forma resumida, sem números processuais ou notas sensíveis."),
+  tool("get_pending_items", "Reúne tarefas, documentos, exames e processos que exigem atenção."),
+  tool("get_family_timeline", "Lista eventos recentes da família sem estados brutos, anexos ou identificadores."),
 ];
 
 const handlers: Record<
@@ -56,6 +84,20 @@ const handlers: Record<
   list_active_cases: listActiveCases,
   get_recent_timeline: getRecentTimeline,
   list_next_calendar_events: listNextCalendarEvents,
+  list_people: listPeople,
+  list_properties: listProperties,
+  get_property_portfolio_summary: getPropertyPortfolioSummary,
+  list_documents: listDocuments,
+  get_document_expirations: getDocumentExpirations,
+  list_financial_accounts: listFinancialAccounts,
+  get_financial_summary: getFinancialSummary,
+  list_health_records: listHealthRecords,
+  get_health_alerts: getHealthAlerts,
+  list_calendar_events: listCalendarEvents,
+  list_tasks: listTasks,
+  list_legal_processes: listLegalProcesses,
+  get_pending_items: getPendingItems,
+  get_family_timeline: getFamilyTimeline,
 };
 
 export function isExecutiveToolName(value: string): value is ExecutiveToolName {

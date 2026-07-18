@@ -1,6 +1,11 @@
 import type { PostgrestError } from "@supabase/supabase-js";
 import { getGoogleCalendarUpcomingEvents } from "@/lib/calendar/status";
 import { redactSensitiveText, toDateOnly } from "@/lib/ai/tools/privacy";
+import {
+  buildPropertyExecutiveRecord,
+  summarizePropertyPortfolio,
+  type PropertyExecutiveRecord,
+} from "@/lib/ai/tools/properties";
 import type {
   ExecutiveToolContext,
   ExecutiveToolResult,
@@ -27,6 +32,226 @@ function assertQuery(error: PostgrestError | null, resource: string) {
   if (error) {
     throw new Error(`Falha ao consultar ${resource}`);
   }
+}
+
+function finiteNumber(value: unknown) {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim() !== ""
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function personFromRelation(value: unknown) {
+  const relation = Array.isArray(value) ? value[0] : value;
+  if (!relation || typeof relation !== "object") {
+    return { firstName: null, lastName: null };
+  }
+  const person = relation as Record<string, unknown>;
+  return {
+    firstName: person.first_name,
+    lastName: person.last_name,
+  };
+}
+
+async function loadPropertyPortfolio(
+  context: ExecutiveToolContext
+): Promise<PropertyExecutiveRecord[]> {
+  const query = await context.supabase
+    .from("properties")
+    .select(
+      "id, title, address, city, state, metadata, property_owners(person_id, ownership_percentage, people(first_name, last_name))"
+    )
+    .eq("family_id", context.familyId)
+    .is("deleted_at", null)
+    .order("title", { ascending: true })
+    .limit(50);
+
+  assertQuery(query.error, "imóveis");
+
+  return ((query.data ?? []) as Array<Record<string, unknown>>).map((row) => {
+    const ownerRows = Array.isArray(row.property_owners)
+      ? (row.property_owners as Array<Record<string, unknown>>)
+      : [];
+    return buildPropertyExecutiveRecord({
+      id: String(row.id),
+      title: row.title,
+      address: row.address,
+      city: row.city,
+      state: row.state,
+      status: null,
+      metadata:
+        row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : null,
+      owners: ownerRows.map((owner) => {
+        const person = personFromRelation(owner.people);
+        return {
+          personId: String(owner.person_id),
+          firstName: person.firstName,
+          lastName: person.lastName,
+          ownershipPercentage: owner.ownership_percentage,
+        };
+      }),
+    });
+  });
+}
+
+export async function listPeople(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const query = await context.supabase
+    .from("people")
+    .select("first_name, last_name, family_role, status")
+    .eq("family_id", context.familyId)
+    .is("deleted_at", null)
+    .order("first_name", { ascending: true })
+    .limit(30);
+
+  assertQuery(query.error, "pessoas");
+  const items = ((query.data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+    name: redactSensitiveText(
+      `${String(row.first_name ?? "")} ${String(row.last_name ?? "")}`.trim()
+    ),
+    familyRole: redactSensitiveText(row.family_role, 80),
+    status: redactSensitiveText(row.status, 80),
+  }));
+  return result(context, { count: items.length, items });
+}
+
+export async function listProperties(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const items = await loadPropertyPortfolio(context);
+  return result(context, { count: items.length, items });
+}
+
+export async function getPropertyPortfolioSummary(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const properties = await loadPropertyPortfolio(context);
+  return result(context, summarizePropertyPortfolio(properties));
+}
+
+export async function listDocuments(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const query = await context.supabase
+    .from("documents")
+    .select("title, document_type, issue_date, expiration_date, processing_status")
+    .eq("family_id", context.familyId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(30);
+
+  assertQuery(query.error, "documentos");
+  const items = ((query.data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+    title: redactSensitiveText(row.title),
+    type: redactSensitiveText(row.document_type, 80),
+    issueDate: row.issue_date,
+    expirationDate: row.expiration_date,
+    processingStatus: redactSensitiveText(row.processing_status, 80),
+  }));
+  return result(context, { count: items.length, items });
+}
+
+export async function listFinancialAccounts(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const query = await context.supabase
+    .from("accounts")
+    .select("institution, account_type, metadata")
+    .eq("family_id", context.familyId)
+    .is("deleted_at", null)
+    .order("institution", { ascending: true })
+    .limit(30);
+
+  assertQuery(query.error, "contas financeiras");
+  const items = ((query.data ?? []) as Array<Record<string, unknown>>).map((row) => {
+    const metadata =
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {};
+    return {
+      institution: redactSensitiveText(row.institution, 120),
+      accountType: redactSensitiveText(row.account_type, 80),
+      currency: "BRL",
+      balance: finiteNumber(metadata.saldo_atual),
+      balanceUpdatedAt: metadata.data_atualizacao ?? null,
+    };
+  });
+  return result(context, { count: items.length, items });
+}
+
+export async function getFinancialSummary(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const accounts = await listFinancialAccounts(context);
+  if (!accounts.available || !accounts.data || typeof accounts.data !== "object") {
+    return accounts;
+  }
+  const items = (accounts.data as { items?: Array<{ balance: number | null }> }).items ?? [];
+  const known = items
+    .map((item) => item.balance)
+    .filter((value): value is number => value !== null);
+  const withoutBalance = items.length - known.length;
+  return result(context, {
+    accountCount: items.length,
+    accountsWithBalance: known.length,
+    accountsWithoutBalance: withoutBalance,
+    totalKnownBalance:
+      known.length > 0
+        ? Number(known.reduce((sum, value) => sum + value, 0).toFixed(2))
+        : null,
+    currency: "BRL",
+    warnings:
+      withoutBalance > 0
+        ? [`${withoutBalance} conta(s) sem saldo informado; o total é parcial.`]
+        : [],
+  });
+}
+
+export async function listHealthRecords(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const query = await context.supabase
+    .from("health_exams")
+    .select("exam_name, category, due_date, status")
+    .eq("family_id", context.familyId)
+    .is("deleted_at", null)
+    .order("due_date", { ascending: false, nullsFirst: false })
+    .limit(30);
+
+  if (isMissingRelation(query.error)) {
+    return unavailable(context, "O módulo de exames ainda não está disponível no banco deste ambiente.");
+  }
+  assertQuery(query.error, "exames");
+  const items = ((query.data ?? []) as Array<Record<string, unknown>>).map((row) => ({
+    exam: redactSensitiveText(row.exam_name),
+    category: redactSensitiveText(row.category, 80),
+    dueDate: row.due_date,
+    status: redactSensitiveText(row.status, 80),
+  }));
+  return result(context, { count: items.length, items });
+}
+
+export async function getPendingItems(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const [tasks, documents, exams, cases] = await Promise.all([
+    listOpenTasks(context),
+    listExpiringDocuments(context),
+    listDueExams(context),
+    listActiveCases(context),
+  ]);
+  return result(context, {
+    tasks,
+    documents,
+    exams,
+    legalCases: cases,
+  });
 }
 
 export async function listOpenTasks(
@@ -264,3 +489,10 @@ export async function getDashboard(
     },
   });
 }
+
+export const getDocumentExpirations = listExpiringDocuments;
+export const getHealthAlerts = listDueExams;
+export const listCalendarEvents = listNextCalendarEvents;
+export const listTasks = listOpenTasks;
+export const listLegalProcesses = listActiveCases;
+export const getFamilyTimeline = getRecentTimeline;
