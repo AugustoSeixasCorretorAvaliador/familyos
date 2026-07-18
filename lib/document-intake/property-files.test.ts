@@ -3,6 +3,7 @@ import {
   getPropertyDocumentFiles,
   getPropertyDocumentTitle,
   isArchiveWithoutOcr,
+  validateUploadedPropertyDocuments,
 } from "@/lib/document-intake/property-files";
 
 describe("property document archive intake", () => {
@@ -32,5 +33,47 @@ describe("property document archive intake", () => {
         totalFiles: 2,
       })
     ).toBe("Documentos do imovel - promessa compra venda");
+  });
+
+  it("aceita somente uploads previamente gravados dentro da familia", () => {
+    const result = validateUploadedPropertyDocuments(
+      [
+        {
+          storagePath: "family-1/sem-titular/documento/arquivo.pdf",
+          fileName: "arquivo.pdf",
+          mimeType: "application/pdf",
+          size: 1024,
+        },
+      ],
+      "family-1"
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      files: [
+        {
+          storagePath: "family-1/sem-titular/documento/arquivo.pdf",
+          fileName: "arquivo.pdf",
+          mimeType: "application/pdf",
+          size: 1024,
+        },
+      ],
+    });
+  });
+
+  it("rejeita caminho de outra familia", () => {
+    expect(
+      validateUploadedPropertyDocuments(
+        [
+          {
+            storagePath: "family-2/sem-titular/documento/arquivo.pdf",
+            fileName: "arquivo.pdf",
+            mimeType: "application/pdf",
+            size: 1024,
+          },
+        ],
+        "family-1"
+      )
+    ).toEqual({ ok: false, code: "invalid_file" });
   });
 });
