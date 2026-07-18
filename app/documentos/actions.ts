@@ -28,7 +28,6 @@ const ALLOWED_MIME_TYPES = new Set([
 
 const DOCUMENT_STATUS = {
   uploaded: "Enviado",
-  archived: "Arquivado sem OCR",
   processing: "OCR em processamento",
   waitingReview: "Aguardando conferencia",
   confirmed: "Confirmado",
@@ -250,7 +249,7 @@ export async function intakeDocumentFile(
         is_current: true,
         status: input.skipOcr ? "active" : "pending",
         processing_status: input.skipOcr
-          ? DOCUMENT_STATUS.archived
+          ? DOCUMENT_STATUS.confirmed
           : DOCUMENT_STATUS.uploaded,
         review_required: !input.skipOcr,
         last_ocr_error: null,
@@ -308,7 +307,7 @@ export async function intakeDocumentFile(
       fileHash: sha256(bytes),
     });
 
-    const { error: updateError } = await supabase
+    const { data: persistedDocument, error: updateError } = await supabase
       .from("documents")
       .update({
         owner_person_id: ownerPersonId,
@@ -332,7 +331,7 @@ export async function intakeDocumentFile(
             ? "pending"
             : previous?.status ?? "active",
         processing_status: input.skipOcr
-          ? DOCUMENT_STATUS.archived
+          ? DOCUMENT_STATUS.confirmed
           : DOCUMENT_STATUS.uploaded,
         review_required: !input.skipOcr,
         last_ocr_error: null,
@@ -343,8 +342,27 @@ export async function intakeDocumentFile(
         },
       })
       .eq("id", documentId)
-      .eq("family_id", input.familyId);
-    if (updateError) throw updateError;
+      .eq("family_id", input.familyId)
+      .select("id, property_id, processing_status, storage_path")
+      .maybeSingle();
+    if (updateError || !persistedDocument) {
+      throw updateError ?? new Error("document_intake_not_persisted");
+    }
+    if (
+      input.propertyId &&
+      persistedDocument.property_id !== input.propertyId
+    ) {
+      throw new Error("document_property_link_not_persisted");
+    }
+    if (
+      input.skipOcr &&
+      persistedDocument.processing_status !== DOCUMENT_STATUS.confirmed
+    ) {
+      throw new Error("document_archive_status_not_persisted");
+    }
+    if (persistedDocument.storage_path !== storagePath) {
+      throw new Error("document_storage_path_not_persisted");
+    }
   } catch (error) {
     await supabase.storage.from(BUCKET).remove([storagePath]);
     await supabase
