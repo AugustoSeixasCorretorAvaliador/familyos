@@ -6,11 +6,11 @@ import { MainNav } from "@/app/components/main-nav";
 import { SubmitButton } from "@/app/components/submit-button";
 import {
   createProperty,
-  createPropertyDocument,
   deleteProperty,
   deletePropertyDocument,
   updateProperty,
 } from "@/app/imoveis/actions";
+import { PropertyDocumentUploadForm } from "@/app/imoveis/property-document-upload-form";
 import { getActionErrorMessage } from "@/lib/action-feedback";
 import { getDocumentProcessingLabel } from "@/lib/document-intake/status";
 import { getFamilyContext } from "@/lib/family/context";
@@ -333,78 +333,11 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                           RGI, escritura, IPTU, bombeiros, laudemio, planta, convencao e seguro.
                         </p>
 
-                        <form
-                          action={createPropertyDocument}
-                          className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2"
-                        >
-                          <input type="hidden" name="property_id" value={property.id} />
-                          <input
-                            name="files"
-                            type="file"
-                            multiple
-                            required
-                            accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,application/pdf,image/png,image/jpeg,image/webp,image/tiff"
-                            className="rounded-xl border border-slate-300 bg-white px-3 py-2 md:col-span-2"
-                          />
-                          <p className="text-xs text-slate-500 md:col-span-2">
-                            Selecione um arquivo para OCR ou ate 10 arquivos para arquivar no historico sem OCR.
-                          </p>
-                          <label className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-900 md:col-span-2">
-                            <input
-                              name="archive_without_ocr"
-                              type="checkbox"
-                              className="mt-0.5 h-4 w-4 rounded border-emerald-400"
-                            />
-                            <span>
-                              <strong className="block">Somente arquivar no historico</strong>
-                              Marque antes de clicar em Enviar e guardar. Nao use o botao Salvar alteracoes do imovel para concluir anexos.
-                              Os arquivos permanecem vinculados ao imovel e poderao ser revisados ou processados depois.
-                            </span>
-                          </label>
-                          <select
-                            name="document_type"
-                            className="rounded-xl border border-slate-300 bg-white px-3 py-2"
-                          >
-                            <option value="">Tipo (opcional antes do OCR)</option>
-                            {PROPERTY_DOCUMENT_TYPES.map((type) => (
-                              <option key={type} value={type}>{type}</option>
-                            ))}
-                          </select>
-                          <input
-                            name="title"
-                            placeholder="Titulo (opcional antes do OCR)"
-                            className="rounded-xl border border-slate-300 bg-white px-3 py-2"
-                          />
-                          <label className="text-sm text-slate-600">
-                            Emissao
-                            <input
-                              name="issue_date"
-                              type="date"
-                              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
-                            />
-                          </label>
-                          <label className="text-sm text-slate-600">
-                            Validade
-                            <input
-                              name="expiration_date"
-                              type="date"
-                              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
-                            />
-                          </label>
-                          <textarea
-                            name="observacoes"
-                            rows={2}
-                            placeholder="Observacoes"
-                            className="rounded-xl border border-slate-300 bg-white px-3 py-2 md:col-span-2"
-                          />
-                          <div className="md:col-span-2">
-                            <SubmitButton
-                              label="Enviar e guardar"
-                              pendingLabel="Enviando arquivos..."
-                              className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                            />
-                          </div>
-                        </form>
+                        <PropertyDocumentUploadForm
+                          familyId={family.id}
+                          propertyId={property.id}
+                          documentTypes={PROPERTY_DOCUMENT_TYPES}
+                        />
 
                         {documents.length === 0 ? (
                           <p className="mt-4 text-sm text-slate-500">Nenhum documento vinculado.</p>

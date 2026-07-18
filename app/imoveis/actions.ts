@@ -1,5 +1,6 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
@@ -13,6 +14,7 @@ import {
   getPropertyDocumentTitle,
   isArchiveWithoutOcr,
   MAX_PROPERTY_ARCHIVE_FILES,
+  validateUploadedPropertyDocuments,
 } from "@/lib/document-intake/property-files";
 import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
@@ -389,6 +391,169 @@ export async function createPropertyDocument(formData: FormData) {
       ocrResult.outcome === "manual" ? "uploaded_manual" : "uploaded_ocr"
     }`
   );
+}
+
+export async function finalizeArchivedPropertyDocuments(formData: FormData) {
+  const context = await getFamilyContext();
+  const { user, family } = context;
+  const supabase = createClient();
+
+  if (!user || !family) {
+    return { ok: false as const, code: "permission_denied" as const };
+  }
+
+  const propertyId = (formData.get("property_id") as string | null) || "";
+  if (!propertyId) {
+    return { ok: false as const, code: "missing_id" as const };
+  }
+
+  let uploadedValue: unknown;
+  try {
+    uploadedValue = JSON.parse(
+      (formData.get("uploaded_files") as string | null) || "null"
+    );
+  } catch {
+    return { ok: false as const, code: "invalid_file" as const };
+  }
+  const validation = validateUploadedPropertyDocuments(uploadedValue, family.id);
+  if (!validation.ok) {
+    return { ok: false as const, code: validation.code };
+  }
+
+  const { data: property, error: propertyError } = await supabase
+    .from("properties")
+    .select("id")
+    .eq("id", propertyId)
+    .eq("family_id", family.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (propertyError || !property) {
+    return { ok: false as const, code: "not_found" as const };
+  }
+
+  const requestedTitle =
+    (formData.get("title") as string | null)?.trim() || null;
+  const documentType =
+    (formData.get("document_type") as string | null)?.trim() ||
+    "Documento Generico";
+  const issueDate = (formData.get("issue_date") as string | null) || null;
+  const expirationDate =
+    (formData.get("expiration_date") as string | null) || null;
+  const observacoes =
+    (formData.get("observacoes") as string | null)?.trim() || null;
+  const createdDocumentIds: string[] = [];
+
+  try {
+    for (const file of validation.files) {
+      const downloaded = await supabase.storage
+        .from(DOCUMENTS_BUCKET)
+        .download(file.storagePath);
+      if (downloaded.error || !downloaded.data) {
+        throw downloaded.error ?? new Error("storage_download_failed");
+      }
+      const bytes = new Uint8Array(await downloaded.data.arrayBuffer());
+      if (bytes.byteLength !== file.size) {
+        throw new Error("uploaded_file_size_mismatch");
+      }
+
+      const title = getPropertyDocumentTitle({
+        requestedTitle,
+        fileName: file.fileName,
+        totalFiles: validation.files.length,
+      });
+      const { data: document, error: documentError } = await supabase
+        .from("documents")
+        .insert({
+          family_id: family.id,
+          owner_person_id: null,
+          property_id: propertyId,
+          document_type: documentType,
+          document_number: null,
+          title,
+          issue_date: issueDate,
+          expiration_date: expirationDate,
+          issuing_authority: null,
+          country: "Brasil",
+          storage_provider: "supabase_storage",
+          storage_path: file.storagePath,
+          file_name: file.fileName,
+          mime_type: file.mimeType,
+          version: 1,
+          is_current: true,
+          status: "active",
+          processing_status: "Confirmado",
+          review_required: false,
+          last_ocr_error: null,
+          metadata: {
+            observacoes,
+            intake_draft: false,
+            intake_source: "imoveis.actions",
+            archived_without_ocr: true,
+            intake_error: null,
+          },
+        })
+        .select("id")
+        .single();
+      if (documentError || !document) {
+        throw documentError ?? new Error("document_not_created");
+      }
+      createdDocumentIds.push(document.id);
+
+      const { error: versionError } = await supabase
+        .from("document_versions")
+        .insert({
+          family_id: family.id,
+          document_id: document.id,
+          version: 1,
+          storage_path: file.storagePath,
+          file_name: file.fileName,
+          mime_type: file.mimeType,
+          file_hash_sha256: createHash("sha256").update(bytes).digest("hex"),
+          uploaded_by: user.id,
+          uploaded_at: new Date().toISOString(),
+          is_current: true,
+        });
+      if (versionError) throw versionError;
+
+      await logTimelineEvent({
+        familyId: family.id,
+        eventType: "property_document_uploaded",
+        affectedEntityType: "documents",
+        affectedEntityId: document.id,
+        source: "imoveis.actions",
+      });
+    }
+  } catch (error) {
+    if (createdDocumentIds.length > 0) {
+      await supabase
+        .from("documents")
+        .delete()
+        .eq("family_id", family.id)
+        .in("id", createdDocumentIds);
+    }
+    await supabase.storage
+      .from(DOCUMENTS_BUCKET)
+      .remove(validation.files.map((file) => file.storagePath));
+    const reported = reportActionError({
+      error,
+      userId: user.id,
+      familyId: family.id,
+      module: "imoveis",
+      action: "finalize_archived_property_documents",
+      fallback: "create_failed",
+    });
+    return {
+      ok: false as const,
+      code: reported.code,
+      requestId: reported.requestId,
+    };
+  }
+
+  revalidatePath("/imoveis");
+  revalidatePath("/documentos");
+  revalidatePath("/dashboard");
+  revalidatePath("/timeline");
+  return { ok: true as const, count: createdDocumentIds.length };
 }
 
 export async function deletePropertyDocument(formData: FormData) {
