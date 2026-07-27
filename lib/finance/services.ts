@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { decodeEntryCursor, encodeEntryCursor } from "@/lib/finance/pagination";
 import type { DashboardMetrics, FinanceFilters, FinanceWorkspace, FinancialEntryPage, FinancialEntryRow } from "@/lib/finance/types";
 
-const ACTIVE = { deleted_at: null } as const;
+//const ACTIVE = { deleted_at: null } as const;
 
 function throwIfError(error: { code?: string; message: string } | null, scope: string) {
   if (error) {
@@ -24,19 +24,19 @@ export async function getFinanceWorkspace(familyId: string, includeEntries = tru
   const db = createClient();
   const entriesPromise = includeEntries ? getAllFinancialEntries(familyId) : Promise.resolve([]);
   const results = await Promise.all([
-    db.from("accounts").select("*").eq("family_id", familyId).match(ACTIVE).order("institution"),
-    db.from("financial_categories").select("*").eq("family_id", familyId).match(ACTIVE).order("name"),
-    db.from("credit_cards").select("*").eq("family_id", familyId).match(ACTIVE).order("name"),
-    db.from("recurrences").select("*").eq("family_id", familyId).match(ACTIVE).order("created_at", { ascending: false }),
-    db.from("installment_purchases").select("*").eq("family_id", familyId).match(ACTIVE).order("created_at", { ascending: false }),
-    db.from("card_invoices").select("*").eq("family_id", familyId).match(ACTIVE).order("competence", { ascending: false }),
-    db.from("properties").select("*").eq("family_id", familyId).match(ACTIVE).order("title"),
-    db.from("property_units").select("*").eq("family_id", familyId).match(ACTIVE).order("name"),
-    db.from("lease_contracts").select("*").eq("family_id", familyId).match(ACTIVE).order("start_date", { ascending: false }),
-    db.from("lease_owner_shares").select("*").eq("family_id", familyId).match(ACTIVE).order("valid_from", { ascending: false }),
-    db.from("investment_assets").select("*").eq("family_id", familyId).match(ACTIVE).order("name"),
+    db.from("accounts").select("*").eq("family_id", familyId).is("deleted_at", null).order("institution"),
+    db.from("financial_categories").select("*").eq("family_id", familyId).is("deleted_at", null).order("name"),
+    db.from("credit_cards").select("*").eq("family_id", familyId).is("deleted_at", null).order("name"),
+    db.from("recurrences").select("*").eq("family_id", familyId).is("deleted_at", null).order("created_at", { ascending: false }),
+    db.from("installment_purchases").select("*").eq("family_id", familyId).is("deleted_at", null).order("created_at", { ascending: false }),
+    db.from("card_invoices").select("*").eq("family_id", familyId).is("deleted_at", null).order("competence", { ascending: false }),
+    db.from("properties").select("*").eq("family_id", familyId).is("deleted_at", null).order("title"),
+    db.from("property_units").select("*").eq("family_id", familyId).is("deleted_at", null).order("name"),
+    db.from("lease_contracts").select("*").eq("family_id", familyId).is("deleted_at", null).order("start_date", { ascending: false }),
+    db.from("lease_owner_shares").select("*").eq("family_id", familyId).is("deleted_at", null).order("valid_from", { ascending: false }),
+    db.from("investment_assets").select("*").eq("family_id", familyId).is("deleted_at", null).order("name"),
     db.from("investment_positions").select("*").eq("family_id", familyId).order("position_date", { ascending: false }),
-    db.from("financial_alert_rules").select("*").eq("family_id", familyId).match(ACTIVE).order("name"),
+    db.from("financial_alert_rules").select("*").eq("family_id", familyId).is("deleted_at", null).order("name"),
     db.from("financial_entry_history").select("*").eq("family_id", familyId).order("changed_at", { ascending: false }).limit(500),
     db.from("people").select("id,first_name,last_name").eq("family_id", familyId).is("deleted_at", null).order("first_name"),
   ]);
