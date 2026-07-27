@@ -2,162 +2,368 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { errorRedirectPath, reportActionError } from "@/lib/action-error";
-import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
+import { reportActionError } from "@/lib/action-error";
+import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
+import { generateMonthlyOccurrences, splitInstallments } from "@/lib/finance/domain";
+import { assertNoClientFamilyId, CATEGORY_TYPES, competenceValue, dateValue, ENTRY_STATUSES, ENTRY_TYPES, FinanceValidationError, integerValue, moneyValue, oneOf, optionalId, textValue, validatePercentage } from "@/lib/finance/validation";
 import { createClient } from "@/lib/supabase/server";
+import type { FinancialEntryInsert } from "@/lib/finance/types";
 
-function toNumberOrNull(value: FormDataEntryValue | null) {
-  if (!value || typeof value !== "string" || value.trim() === "") return null;
-  const raw = value.trim();
-  const normalized = raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : null;
+type Context = Awaited<ReturnType<typeof getFamilyContext>> & { user: NonNullable<Awaited<ReturnType<typeof getFamilyContext>>["user"]>; family: NonNullable<Awaited<ReturnType<typeof getFamilyContext>>["family"]> };
+
+async function requireEditor(): Promise<Context> {
+  const context = await getFamilyContext();
+  if (!context.user) redirect("/login");
+  if (!context.family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/financas?error=permission_denied");
+  return context as Context;
+}
+
+function feedback(view: string, success: string) {
+  revalidatePath("/financas");
+  revalidatePath("/dashboard");
+  redirect(`/financas?view=${view}&success=${success}`);
+}
+
+function actionFailure(error: unknown, context: Context, action: string, view: string) {
+  if (error instanceof FinanceValidationError) redirect(`/financas?view=${view}&error=${encodeURIComponent(error.code)}`);
+  const result = reportActionError({ error, userId: context.user.id, familyId: context.family.id, module: "financas", action, fallback: "unknown" });
+  const params = new URLSearchParams({ view, error: result.code, request_id: result.requestId });
+  redirect(`/financas?${params.toString()}`);
 }
 
 export async function createAccount(formData: FormData) {
-  const context = await getFamilyContext();
-  const { user, family } = context;
-  const supabase = createClient();
-
-  if (!user) redirect("/login");
-  if (!family) redirect("/dashboard?setup=required");
-
-  const institution = (formData.get("institution") as string | null)?.trim();
-  const accountType = (formData.get("account_type") as string | null)?.trim();
-
-  if (!institution || !accountType) {
-    redirect("/financas?error=required_fields");
-  }
-
-  const metadata = {
-    agencia: (formData.get("agencia") as string | null)?.trim() || null,
-    ultimos_quatro: (formData.get("ultimos_quatro") as string | null)?.trim() || null,
-    saldo_atual: toNumberOrNull(formData.get("saldo_atual")),
-    data_atualizacao: (formData.get("data_atualizacao") as string | null) || null,
-    observacoes: (formData.get("observacoes") as string | null)?.trim() || null,
-  };
-
-  const { error } = await supabase.from("accounts").insert({
-    family_id: family.id,
-    owner_person_id: (formData.get("owner_person_id") as string | null) || null,
-    institution,
-    account_type: accountType,
-    account_identifier: (formData.get("account_identifier") as string | null)?.trim() || null,
-    status: "active",
-    metadata,
-  });
-
-  if (error) {
-    const result = reportActionError({
-      error,
-      userId: user.id,
-      familyId: family.id,
-      module: "financas",
-      action: "create_account",
-      fallback: "create_failed",
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData);
+    const db = createClient();
+    const { error } = await db.from("accounts").insert({
+      family_id: context.family.id, created_by: context.user.id,
+      institution: textValue(formData.get("institution"), true)!, account_type: textValue(formData.get("account_type"), true)!,
+      account_identifier: textValue(formData.get("account_identifier")), owner_person_id: optionalId(formData, "owner_person_id"),
+      opening_balance: moneyValue(formData.get("opening_balance")) ?? 0, opening_balance_date: dateValue(formData.get("opening_balance_date")),
+      currency: "BRL", status: "active", metadata: {},
     });
-    redirect(errorRedirectPath("/financas", result));
-  }
-
-  revalidatePath("/financas");
-  revalidatePath("/dashboard");
-  redirect("/financas?success=created");
+    if (error) throw error;
+  } catch (error) { actionFailure(error, context, "create_account", "accounts"); }
+  feedback("accounts", "created");
 }
 
 export async function updateAccount(formData: FormData) {
-  const context = await getFamilyContext();
-  const { user, family } = context;
-  const supabase = createClient();
-
-  if (!user) redirect("/login");
-  if (!family) redirect("/dashboard?setup=required");
-
-  const accountId = formData.get("account_id") as string | null;
-  if (!accountId) {
-    redirect("/financas?error=missing_id");
-  }
-
-  const institution = (formData.get("institution") as string | null)?.trim();
-  const accountType = (formData.get("account_type") as string | null)?.trim();
-
-  if (!institution || !accountType) {
-    redirect("/financas?error=required_fields");
-  }
-
-  const metadata = {
-    agencia: (formData.get("agencia") as string | null)?.trim() || null,
-    ultimos_quatro: (formData.get("ultimos_quatro") as string | null)?.trim() || null,
-    saldo_atual: toNumberOrNull(formData.get("saldo_atual")),
-    data_atualizacao: (formData.get("data_atualizacao") as string | null) || null,
-    observacoes: (formData.get("observacoes") as string | null)?.trim() || null,
-  };
-
-  const { data, error } = await supabase
-    .from("accounts")
-    .update({
-      owner_person_id: (formData.get("owner_person_id") as string | null) || null,
-      institution,
-      account_type: accountType,
-      account_identifier: (formData.get("account_identifier") as string | null)?.trim() || null,
-      metadata,
-    })
-    .eq("id", accountId)
-    .eq("family_id", family.id)
-    .select("id")
-    .maybeSingle();
-
-  if (error || !data) {
-    const result = reportActionError({
-      error: error ?? { code: "PGRST116", message: "account_not_found" },
-      userId: user.id,
-      familyId: family.id,
-      module: "financas",
-      action: "update_account",
-      fallback: "update_failed",
-    });
-    redirect(errorRedirectPath("/financas", result));
-  }
-
-  revalidatePath("/financas");
-  revalidatePath("/dashboard");
-  redirect("/financas?success=updated");
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData);
+    const id = textValue(formData.get("id"), true)!;
+    const { data, error } = await createClient().from("accounts").update({
+      institution: textValue(formData.get("institution"), true)!, account_type: textValue(formData.get("account_type"), true)!,
+      account_identifier: textValue(formData.get("account_identifier")), owner_person_id: optionalId(formData, "owner_person_id"),
+      opening_balance: moneyValue(formData.get("opening_balance")) ?? 0, opening_balance_date: dateValue(formData.get("opening_balance_date")), updated_by: context.user.id,
+    }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    if (error || !data) throw error ?? new Error("not_found");
+  } catch (error) { actionFailure(error, context, "update_account", "accounts"); }
+  feedback("accounts", "updated");
 }
 
-export async function deleteAccount(formData: FormData) {
-  const context = await getFamilyContext();
-  const { user, family } = context;
-  const supabase = createClient();
+export async function createCategory(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData);
+    const { error } = await createClient().from("financial_categories").insert({ family_id: context.family.id, created_by: context.user.id,
+      name: textValue(formData.get("name"), true)!, category_type: oneOf(formData.get("category_type"), CATEGORY_TYPES), parent_id: optionalId(formData, "parent_id"),
+      color: textValue(formData.get("color")), icon: textValue(formData.get("icon")), active: true });
+    if (error) throw error;
+  } catch (error) { actionFailure(error, context, "create_category", "categories"); }
+  feedback("categories", "created");
+}
 
-  if (!user) redirect("/login");
-  if (!family) redirect("/dashboard?setup=required");
+export async function updateCategory(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!;
+    const { data, error } = await createClient().from("financial_categories").update({ name: textValue(formData.get("name"), true)!, category_type: oneOf(formData.get("category_type"), CATEGORY_TYPES), parent_id: optionalId(formData, "parent_id"), color: textValue(formData.get("color")), icon: textValue(formData.get("icon")), updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    if (error || !data) throw error ?? new Error("not_found");
+  } catch (error) { actionFailure(error, context, "update_category", "categories"); }
+  feedback("categories", "updated");
+}
+
+export async function createCard(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData);
+    const { error } = await createClient().from("credit_cards").insert({ family_id: context.family.id, created_by: context.user.id,
+      name: textValue(formData.get("name"), true)!, institution: textValue(formData.get("institution"), true)!, brand: textValue(formData.get("brand")),
+      last_four: textValue(formData.get("last_four")), credit_limit: moneyValue(formData.get("credit_limit")),
+      closing_day: integerValue(formData.get("closing_day"), { min: 1, max: 31 }), due_day: integerValue(formData.get("due_day"), { min: 1, max: 31 }),
+      best_purchase_day: integerValue(formData.get("best_purchase_day"), { min: 1, max: 31 }), payment_account_id: optionalId(formData, "payment_account_id") });
+    if (error) throw error;
+  } catch (error) { actionFailure(error, context, "create_card", "cards"); }
+  feedback("cards", "created");
+}
+
+export async function updateCard(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!;
+    const { data, error } = await createClient().from("credit_cards").update({ name: textValue(formData.get("name"), true)!, institution: textValue(formData.get("institution"), true)!, brand: textValue(formData.get("brand")), last_four: textValue(formData.get("last_four")), credit_limit: moneyValue(formData.get("credit_limit")), closing_day: integerValue(formData.get("closing_day"), { min: 1, max: 31 }), due_day: integerValue(formData.get("due_day"), { min: 1, max: 31 }), best_purchase_day: integerValue(formData.get("best_purchase_day"), { min: 1, max: 31 }), payment_account_id: optionalId(formData, "payment_account_id"), updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    if (error || !data) throw error ?? new Error("not_found");
+  } catch (error) { actionFailure(error, context, "update_card", "cards"); }
+  feedback("cards", "updated");
+}
+
+function entryFromForm(formData: FormData, context: Context): FinancialEntryInsert {
+  assertNoClientFamilyId(formData);
+  const entryType = oneOf(formData.get("entry_type"), ENTRY_TYPES);
+  const actualAmount = moneyValue(formData.get("actual_amount"));
+  const status = oneOf(formData.get("status") ?? (actualAmount === null ? "planned" : entryType === "income" ? "received" : "paid"), ENTRY_STATUSES);
+  const direction = entryType === "income" || entryType === "investment_redemption" || entryType === "investment_yield" ? "inflow" : entryType === "transfer" || entryType === "adjustment" || entryType === "reversal" ? "none" : "outflow";
+  return {
+    family_id: context.family.id, created_by: context.user.id, description: textValue(formData.get("description"), true)!,
+    competence: competenceValue(formData.get("competence")), entry_type: entryType, cash_direction: direction,
+    expected_amount: moneyValue(formData.get("expected_amount"), true)!, actual_amount: actualAmount,
+    expected_date: dateValue(formData.get("expected_date")), due_date: dateValue(formData.get("due_date")), effective_date: dateValue(formData.get("effective_date")),
+    status, category_id: optionalId(formData, "category_id"), account_id: optionalId(formData, "account_id"), card_id: optionalId(formData, "card_id"),
+    responsible_person_id: optionalId(formData, "responsible_person_id"), property_id: optionalId(formData, "property_id"), property_unit_id: optionalId(formData, "property_unit_id"),
+    lease_contract_id: optionalId(formData, "lease_contract_id"), investment_asset_id: optionalId(formData, "investment_asset_id"), notes: textValue(formData.get("notes")), origin: "manual",
+  };
+}
+
+export async function createEntry(formData: FormData) {
+  const context = await requireEditor();
+  try { const { error } = await createClient().from("financial_entries").insert(entryFromForm(formData, context)); if (error) throw error; }
+  catch (error) { actionFailure(error, context, "create_entry", "movements"); }
+  feedback("movements", "created");
+}
+
+export async function updateEntry(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    const id = textValue(formData.get("id"), true)!;
+    const payload = entryFromForm(formData, context);
+    const { data, error } = await createClient().from("financial_entries").update({ ...payload, family_id: undefined, created_by: undefined, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    if (error || !data) throw error ?? new Error("not_found");
+  } catch (error) { actionFailure(error, context, "update_entry", "movements"); }
+  feedback("movements", "updated");
+}
+
+export async function markEntryPaid(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const actual = moneyValue(formData.get("actual_amount"), true)!; const effective = dateValue(formData.get("effective_date"), true)!;
+    const db = createClient(); const { data: entry, error: readError } = await db.from("financial_entries").select("entry_type").eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+    if (readError || !entry) throw readError ?? new Error("not_found");
+    const status = ["income", "investment_redemption", "investment_yield"].includes(entry.entry_type) ? "received" : "paid";
+    const { error } = await db.from("financial_entries").update({ actual_amount: actual, effective_date: effective, status, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id); if (error) throw error;
+  } catch (error) { actionFailure(error, context, "mark_entry_paid", "movements"); }
+  feedback("movements", "paid");
+}
+
+export async function undoEntryPayment(formData: FormData) {
+  const context = await requireEditor();
+  try { assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const { error } = await createClient().from("financial_entries").update({ actual_amount: null, effective_date: null, status: "planned", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null); if (error) throw error; }
+  catch (error) { actionFailure(error, context, "undo_payment", "movements"); }
+  feedback("movements", "payment_undone");
+}
+
+export async function createTransfer(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const from = optionalId(formData, "from_account_id"); const to = optionalId(formData, "to_account_id"); if (!from || !to || from === to) throw new FinanceValidationError("invalid_transfer");
+    const amount = moneyValue(formData.get("amount"), true)!; const competence = competenceValue(formData.get("competence")); const date = dateValue(formData.get("effective_date"), true)!; const group = crypto.randomUUID(); const description = textValue(formData.get("description")) ?? "Transferência entre contas";
+    const common = { family_id: context.family.id, created_by: context.user.id, description, competence, entry_type: "transfer", expected_amount: amount, actual_amount: amount, effective_date: date, expected_date: date, status: "paid", origin: "manual", transfer_group_id: group } as const;
+    const { error } = await createClient().from("financial_entries").insert([{ ...common, account_id: from, cash_direction: "outflow", source_key: `transfer:${group}:out` }, { ...common, account_id: to, cash_direction: "inflow", source_key: `transfer:${group}:in` }]); if (error) throw error;
+  } catch (error) { actionFailure(error, context, "create_transfer", "movements"); }
+  feedback("movements", "transfer_created");
+}
+
+export async function createRecurrence(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const { error } = await createClient().from("recurrences").insert({ family_id: context.family.id, created_by: context.user.id,
+      description: textValue(formData.get("description"), true)!, entry_type: oneOf(formData.get("entry_type"), ENTRY_TYPES), expected_amount: moneyValue(formData.get("expected_amount"), true)!,
+      frequency: textValue(formData.get("frequency"), true)!, interval_value: integerValue(formData.get("interval_value"), { min: 1, max: 120 }) ?? 1,
+      day_of_month: integerValue(formData.get("day_of_month"), { min: 1, max: 31 }), start_date: dateValue(formData.get("start_date"), true)!, end_date: dateValue(formData.get("end_date")), next_occurrence: dateValue(formData.get("start_date"), true)!,
+      category_id: optionalId(formData, "category_id"), account_id: optionalId(formData, "account_id"), card_id: optionalId(formData, "card_id"), responsible_person_id: optionalId(formData, "responsible_person_id"), rule: {} }); if (error) throw error;
+  } catch (error) { actionFailure(error, context, "create_recurrence", "recurrences"); }
+  feedback("recurrences", "created");
+}
+
+export async function toggleRecurrence(formData: FormData) {
+  const context = await requireEditor();
+  try { assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const active = textValue(formData.get("active"), true) === "true"; const { error } = await createClient().from("recurrences").update({ active, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id); if (error) throw error; }
+  catch (error) { actionFailure(error, context, "toggle_recurrence", "recurrences"); }
+  feedback("recurrences", "updated");
+}
+
+export async function updateRecurrence(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!;
+    const { data, error } = await createClient().from("recurrences").update({ description: textValue(formData.get("description"), true)!, entry_type: oneOf(formData.get("entry_type"), ENTRY_TYPES), expected_amount: moneyValue(formData.get("expected_amount"), true)!, frequency: textValue(formData.get("frequency"), true)!, interval_value: integerValue(formData.get("interval_value"), { min: 1, max: 120 }) ?? 1, day_of_month: integerValue(formData.get("day_of_month"), { min: 1, max: 31 }), start_date: dateValue(formData.get("start_date"), true)!, end_date: dateValue(formData.get("end_date")), next_occurrence: dateValue(formData.get("next_occurrence")), category_id: optionalId(formData, "category_id"), account_id: optionalId(formData, "account_id"), card_id: optionalId(formData, "card_id"), responsible_person_id: optionalId(formData, "responsible_person_id"), updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    if (error || !data) throw error ?? new Error("not_found");
+  } catch (error) { actionFailure(error, context, "update_recurrence", "recurrences"); }
+  feedback("recurrences", "updated");
+}
+
+export async function endRecurrence(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const endDate = dateValue(formData.get("end_date")) ?? new Date().toISOString().slice(0, 10);
+    const { data, error } = await createClient().from("recurrences").update({ active: false, end_date: endDate, next_occurrence: null, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    if (error || !data) throw error ?? new Error("not_found");
+  } catch (error) { actionFailure(error, context, "end_recurrence", "recurrences"); }
+  feedback("recurrences", "ended");
+}
+
+export async function generateRecurrenceOccurrences(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const count = integerValue(formData.get("count"), { min: 1, max: 24, required: true })!; const db = createClient();
+    const { data: rule, error } = await db.from("recurrences").select("*").eq("id", id).eq("family_id", context.family.id).eq("active", true).is("deleted_at", null).maybeSingle(); if (error || !rule) throw error ?? new Error("not_found");
+    if (rule.frequency !== "monthly" || !rule.next_occurrence || !rule.entry_type || rule.expected_amount === null) throw new FinanceValidationError("invalid_recurrence");
+    const occurrences = generateMonthlyOccurrences({ recurrenceId: rule.id, startDate: rule.next_occurrence, count, endDate: rule.end_date });
+    const rows: FinancialEntryInsert[] = occurrences.map((occurrence) => ({ family_id: context.family.id, created_by: context.user.id, description: rule.description ?? "Lançamento recorrente", competence: `${occurrence.date.slice(0, 7)}-01`, entry_type: rule.entry_type!, cash_direction: ["income", "investment_redemption", "investment_yield"].includes(rule.entry_type!) ? "inflow" : "outflow", expected_amount: rule.expected_amount!, expected_date: occurrence.date, due_date: occurrence.date, status: rule.entry_type === "income" ? "receivable" : "payable", origin: "recurrence", purchase_kind: "recurring", recurrence_id: rule.id, category_id: rule.category_id, account_id: rule.account_id, card_id: rule.card_id, responsible_person_id: rule.responsible_person_id, source_key: occurrence.sourceKey }));
+    if (rows.length) { const { error: insertError } = await db.from("financial_entries").upsert(rows, { onConflict: "family_id,source_key", ignoreDuplicates: true }); if (insertError) throw insertError; }
+    const next = generateMonthlyOccurrences({ recurrenceId: rule.id, startDate: rule.next_occurrence, count: count + 1, endDate: rule.end_date }).at(-1)?.date ?? null;
+    const { error: updateError } = await db.from("recurrences").update({ next_occurrence: next, active: Boolean(next), updated_by: context.user.id }).eq("id", rule.id).eq("family_id", context.family.id); if (updateError) throw updateError;
+  } catch (error) { actionFailure(error, context, "generate_recurrence", "recurrences"); }
+  feedback("recurrences", "generated");
+}
+
+export async function createInstallmentPurchase(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const total = moneyValue(formData.get("total_amount"), true)!; const count = integerValue(formData.get("installment_count"), { min: 1, max: 360, required: true })!; const first = competenceValue(formData.get("first_competence")); const description = textValue(formData.get("description"), true)!;
+    const db = createClient(); const { data: purchase, error } = await db.from("installment_purchases").insert({ family_id: context.family.id, created_by: context.user.id, description, total_amount: total, installment_count: count, first_competence: first, purchase_date: dateValue(formData.get("purchase_date")), card_id: optionalId(formData, "card_id"), category_id: optionalId(formData, "category_id"), responsible_person_id: optionalId(formData, "responsible_person_id") }).select("id").single(); if (error) throw error;
+    const cents = splitInstallments(Math.round(total * 100), count); const start = new Date(`${first}T00:00:00Z`);
+    const rows: FinancialEntryInsert[] = cents.map((value, index) => { const date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + index, 1)).toISOString().slice(0, 10); return { family_id: context.family.id, created_by: context.user.id, description: `${description} (${index + 1}/${count})`, competence: date, entry_type: "expense", cash_direction: "none", expected_amount: value / 100, status: "planned", origin: "installment", purchase_kind: "installment", installment_purchase_id: purchase.id, installment_number: index + 1, installment_count: count, card_id: optionalId(formData, "card_id"), category_id: optionalId(formData, "category_id"), source_key: `installment:${purchase.id}:${index + 1}` }; });
+    const { error: entriesError } = await db.from("financial_entries").insert(rows); if (entriesError) throw entriesError;
+  } catch (error) { actionFailure(error, context, "create_installment", "installments"); }
+  feedback("installments", "created");
+}
+
+export async function cancelFutureInstallments(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const from = competenceValue(formData.get("from_competence")); const db = createClient();
+    const { error } = await db.from("financial_entries").update({ status: "cancelled", updated_by: context.user.id }).eq("family_id", context.family.id).eq("installment_purchase_id", id).gte("competence", from).is("actual_amount", null).is("deleted_at", null); if (error) throw error;
+    const { error: purchaseError } = await db.from("installment_purchases").update({ status: "cancelled", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id); if (purchaseError) throw purchaseError;
+  } catch (error) { actionFailure(error, context, "cancel_installments", "installments"); }
+  feedback("installments", "cancelled");
+}
+
+export async function createInvoice(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const cardId = textValue(formData.get("card_id"), true)!; const competence = competenceValue(formData.get("competence")); const dueDate = dateValue(formData.get("due_date"), true)!; const db = createClient();
+    const { data: rows, error } = await db.from("financial_entries").select("expected_amount,entry_type").eq("family_id", context.family.id).eq("card_id", cardId).eq("competence", competence).is("deleted_at", null).neq("status", "cancelled"); if (error) throw error;
+    const expected = (rows ?? []).reduce((sum, row) => row.entry_type === "expense" ? sum + row.expected_amount : row.entry_type === "reversal" ? sum - row.expected_amount : sum, 0);
+    const { data: invoice, error: invoiceError } = await db.from("card_invoices").upsert({ family_id: context.family.id, created_by: context.user.id, card_id: cardId, competence, due_date: dueDate, expected_amount: Math.max(0, expected), status: "open" }, { onConflict: "family_id,card_id,competence" }).select("id").single(); if (invoiceError) throw invoiceError;
+    const { error: linkError } = await db.from("financial_entries").update({ card_invoice_id: invoice.id, updated_by: context.user.id }).eq("family_id", context.family.id).eq("card_id", cardId).eq("competence", competence).is("card_invoice_id", null).is("deleted_at", null); if (linkError) throw linkError;
+  } catch (error) { actionFailure(error, context, "create_invoice", "invoices"); }
+  feedback("invoices", "created");
+}
+
+export async function closeInvoice(formData: FormData) {
+  const context = await requireEditor();
+  try { assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const amount = moneyValue(formData.get("closed_amount"), true)!; const { error } = await createClient().from("card_invoices").update({ status: "closed", closed_amount: amount, closing_date: dateValue(formData.get("closing_date"), true)!, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id); if (error) throw error; }
+  catch (error) { actionFailure(error, context, "close_invoice", "invoices"); }
+  feedback("invoices", "closed");
+}
+
+export async function payInvoice(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const db = createClient(); const { data: invoice, error } = await db.from("card_invoices").select("id,card_id,competence,closed_amount,expected_amount,payment_account_id,status").eq("id", id).eq("family_id", context.family.id).maybeSingle(); if (error || !invoice) throw error ?? new Error("not_found"); if (invoice.status === "paid") throw new FinanceValidationError("already_paid");
+    const amount = moneyValue(formData.get("paid_amount")) ?? invoice.closed_amount ?? invoice.expected_amount; const account = optionalId(formData, "payment_account_id") ?? invoice.payment_account_id; if (!account) throw new FinanceValidationError("payment_account_required"); const date = dateValue(formData.get("payment_date"), true)!;
+    const { error: entryError } = await db.from("financial_entries").insert({ family_id: context.family.id, created_by: context.user.id, description: "Pagamento de fatura", competence: invoice.competence, entry_type: "transfer", cash_direction: "outflow", expected_amount: amount, actual_amount: amount, effective_date: date, status: "paid", origin: "system", account_id: account, card_id: invoice.card_id, card_invoice_id: invoice.id, source_key: `invoice-payment:${invoice.id}` }); if (entryError) throw entryError;
+    const { error: updateError } = await db.from("card_invoices").update({ status: "paid", paid_amount: amount, payment_date: date, payment_account_id: account, updated_by: context.user.id }).eq("id", invoice.id).eq("family_id", context.family.id); if (updateError) throw updateError;
+  } catch (error) { actionFailure(error, context, "pay_invoice", "invoices"); }
+  feedback("invoices", "paid");
+}
+
+export async function reverseInvoicePayment(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const date = dateValue(formData.get("reversal_date"), true)!; const db = createClient();
+    const { data: invoice, error } = await db.from("card_invoices").select("id,card_id,competence,closed_amount,expected_amount,status").eq("id", id).eq("family_id", context.family.id).maybeSingle();
+    if (error || !invoice) throw error ?? new Error("not_found"); if (invoice.status !== "paid") throw new FinanceValidationError("invoice_not_paid");
+    const { data: payment, error: paymentError } = await db.from("financial_entries").select("id,account_id,actual_amount,expected_amount").eq("family_id", context.family.id).eq("source_key", `invoice-payment:${id}`).is("deleted_at", null).maybeSingle();
+    if (paymentError || !payment) throw paymentError ?? new Error("payment_not_found");
+    const amount = payment.actual_amount ?? payment.expected_amount;
+    const { error: reversalError } = await db.from("financial_entries").insert({ family_id: context.family.id, created_by: context.user.id, description: "Estorno de pagamento de fatura", competence: invoice.competence, entry_type: "transfer", cash_direction: "inflow", expected_amount: amount, actual_amount: amount, effective_date: date, status: "received", origin: "system", account_id: payment.account_id, card_id: invoice.card_id, card_invoice_id: invoice.id, reversal_of_entry_id: payment.id, source_key: `invoice-payment-reversal:${invoice.id}` });
+    if (reversalError) throw reversalError;
+    const { error: updateError } = await db.from("card_invoices").update({ status: "closed", paid_amount: null, payment_date: null, updated_by: context.user.id }).eq("id", invoice.id).eq("family_id", context.family.id); if (updateError) throw updateError;
+  } catch (error) { actionFailure(error, context, "reverse_invoice_payment", "invoices"); }
+  feedback("invoices", "reversed");
+}
+
+export async function createPropertyUnit(formData: FormData) {
+  const context = await requireEditor();
+  try { assertNoClientFamilyId(formData); const { error } = await createClient().from("property_units").insert({ family_id: context.family.id, created_by: context.user.id, property_id: textValue(formData.get("property_id"), true)!, name: textValue(formData.get("name"), true)!, code: textValue(formData.get("code"), true)!, unit_type: textValue(formData.get("unit_type")), notes: textValue(formData.get("notes")) }); if (error) throw error; }
+  catch (error) { actionFailure(error, context, "create_unit", "properties"); }
+  feedback("properties", "created");
+}
+
+export async function updateProperty(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!;
+    const { data, error } = await createClient().from("properties").update({ title: textValue(formData.get("title"), true)!, address: textValue(formData.get("address"), true)!, city: textValue(formData.get("city")), state: textValue(formData.get("state")), postal_code: textValue(formData.get("postal_code")), property_type: textValue(formData.get("property_type")), registry_number: textValue(formData.get("registry_number")), municipal_registration: textValue(formData.get("municipal_registration")), updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    if (error || !data) throw error ?? new Error("not_found");
+  } catch (error) { actionFailure(error, context, "update_property", "properties"); }
+  feedback("properties", "updated");
+}
+
+export async function createLease(formData: FormData) {
+  const context = await requireEditor();
+  try { assertNoClientFamilyId(formData); const { error } = await createClient().from("lease_contracts").insert({ family_id: context.family.id, created_by: context.user.id, property_id: textValue(formData.get("property_id"), true)!, unit_id: optionalId(formData, "unit_id"), tenant_person_id: optionalId(formData, "tenant_person_id"), principal_owner_person_id: optionalId(formData, "principal_owner_person_id"), start_date: dateValue(formData.get("start_date"), true)!, end_date: dateValue(formData.get("end_date")), base_rent: moneyValue(formData.get("base_rent"), true)!, charges_amount: moneyValue(formData.get("charges_amount")) ?? 0, adjustment_index: textValue(formData.get("adjustment_index")), next_adjustment_date: dateValue(formData.get("next_adjustment_date")), status: "active" }); if (error) throw error; }
+  catch (error) { actionFailure(error, context, "create_lease", "properties"); }
+  feedback("properties", "created");
+}
+
+export async function createOwnerShare(formData: FormData) {
+  const context = await requireEditor();
+  try { assertNoClientFamilyId(formData); const shareType = textValue(formData.get("share_type"), true)!; const { error } = await createClient().from("lease_owner_shares").insert({ family_id: context.family.id, created_by: context.user.id, lease_contract_id: textValue(formData.get("lease_contract_id"), true)!, person_id: textValue(formData.get("person_id"), true)!, share_type: shareType, percentage: shareType === "percentage" ? validatePercentage(formData.get("percentage")) : null, fixed_amount: shareType === "fixed_amount" ? moneyValue(formData.get("fixed_amount"), true) : null, valid_from: dateValue(formData.get("valid_from"), true)!, valid_until: dateValue(formData.get("valid_until")), rule: {} }); if (error) throw error; }
+  catch (error) { actionFailure(error, context, "create_share", "properties"); }
+  feedback("properties", "created");
+}
+
+export async function createInvestmentAsset(formData: FormData) {
+  const context = await requireEditor();
+  try { assertNoClientFamilyId(formData); const { error } = await createClient().from("investment_assets").insert({ family_id: context.family.id, created_by: context.user.id, name: textValue(formData.get("name"), true)!, institution: textValue(formData.get("institution"), true)!, asset_type: textValue(formData.get("asset_type"), true)!, account_id: optionalId(formData, "account_id"), currency: "BRL" }); if (error) throw error; }
+  catch (error) { actionFailure(error, context, "create_asset", "investments"); }
+  feedback("investments", "created");
+}
+
+export async function updateInvestmentAsset(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!;
+    const { data, error } = await createClient().from("investment_assets").update({ name: textValue(formData.get("name"), true)!, institution: textValue(formData.get("institution"), true)!, asset_type: textValue(formData.get("asset_type"), true)!, account_id: optionalId(formData, "account_id"), updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    if (error || !data) throw error ?? new Error("not_found");
+  } catch (error) { actionFailure(error, context, "update_asset", "investments"); }
+  feedback("investments", "updated");
+}
+
+export async function createInvestmentPosition(formData: FormData) {
+  const context = await requireEditor();
+  try { assertNoClientFamilyId(formData); const { error } = await createClient().from("investment_positions").insert({ family_id: context.family.id, created_by: context.user.id, asset_id: textValue(formData.get("asset_id"), true)!, position_date: dateValue(formData.get("position_date"), true)!, market_value: moneyValue(formData.get("market_value"), true)!, cost_amount: moneyValue(formData.get("cost_amount")), quantity: moneyValue(formData.get("quantity")), unit_price: moneyValue(formData.get("unit_price")) }); if (error) throw error; }
+  catch (error) { actionFailure(error, context, "create_position", "investments"); }
+  feedback("investments", "created");
+}
+
+export async function archiveFinanceRecord(formData: FormData) {
+  const context = await requireEditor();
   if (!canAdminFamily(context)) redirect("/financas?error=permission_denied");
-
-  const accountId = formData.get("account_id") as string | null;
-  if (!accountId) {
-    redirect("/financas?error=missing_id");
-  }
-
-  const { data, error } = await supabase
-    .from("accounts")
-    .delete()
-    .eq("id", accountId)
-    .eq("family_id", family.id)
-    .select("id")
-    .maybeSingle();
-
-  if (error || !data) {
-    const result = reportActionError({
-      error: error ?? { code: "PGRST116", message: "account_not_found" },
-      userId: user.id,
-      familyId: family.id,
-      module: "financas",
-      action: "delete_account",
-      fallback: "delete_failed",
-    });
-    redirect(errorRedirectPath("/financas", result));
-  }
-
-  revalidatePath("/financas");
-  revalidatePath("/dashboard");
-  redirect("/financas?success=deleted");
+  try {
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const entity = textValue(formData.get("entity"), true)!; const now = new Date().toISOString(); const db = createClient(); let error: { message: string } | null = null;
+    if (entity === "account") ({ error } = await db.from("accounts").update({ deleted_at: now, status: "archived", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
+    else if (entity === "category") ({ error } = await db.from("financial_categories").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
+    else if (entity === "card") ({ error } = await db.from("credit_cards").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
+    else if (entity === "entry") ({ error } = await db.from("financial_entries").update({ deleted_at: now, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
+    else if (entity === "asset") ({ error } = await db.from("investment_assets").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
+    else if (entity === "property") ({ error } = await db.from("properties").update({ deleted_at: now, status: "archived", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
+    else throw new FinanceValidationError("invalid_entity"); if (error) throw error;
+  } catch (error) { actionFailure(error, context, "archive_record", "overview"); }
+  feedback("overview", "archived");
 }

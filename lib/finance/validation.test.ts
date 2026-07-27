@@ -1,0 +1,35 @@
+import { describe, expect, it } from "vitest";
+import { assertNoClientFamilyId, competenceValue, dateValue, FinanceValidationError, integerValue, moneyValue, validatePercentage } from "@/lib/finance/validation";
+
+describe("finance validation", () => {
+  it("aceita moeda brasileira sem perder centavos", () => {
+    expect(moneyValue("1.234,56", true)).toBe(1234.56);
+  });
+
+  it("rejeita valor negativo ou com precisão inválida", () => {
+    expect(() => moneyValue("-1,00", true)).toThrow(FinanceValidationError);
+    expect(() => moneyValue("1,001", true)).toThrow(FinanceValidationError);
+  });
+
+  it("normaliza competência mensal para o primeiro dia", () => {
+    expect(competenceValue("2026-08")).toBe("2026-08-01");
+    expect(() => competenceValue("2026-08-02")).toThrow("invalid_competence");
+  });
+
+  it("valida datas, parcelas e dias de cartão", () => {
+    expect(dateValue("2026-02-28", true)).toBe("2026-02-28");
+    expect(integerValue("12", { min: 1, max: 360, required: true })).toBe(12);
+    expect(() => integerValue("32", { min: 1, max: 31 })).toThrow("invalid_number");
+  });
+
+  it("valida percentuais de rateio", () => {
+    expect(validatePercentage("50,25")).toBe(50.25);
+    expect(() => validatePercentage("100,01")).toThrow("invalid_percentage");
+  });
+
+  it("rejeita family_id enviado pelo cliente", () => {
+    const data = new FormData();
+    data.set("family_id", "familia-de-terceiro");
+    expect(() => assertNoClientFamilyId(data)).toThrow("invalid_family_context");
+  });
+});

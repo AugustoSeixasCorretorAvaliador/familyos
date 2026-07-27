@@ -13,7 +13,7 @@ type RelationshipLine = {
 
 type FamilyMemberRow = {
   id: string;
-  people: { first_name: string; last_name: string }[] | null;
+  people: { first_name: string; last_name: string } | null;
 };
 
 type PropertyWithOwnersRow = {
@@ -21,7 +21,7 @@ type PropertyWithOwnersRow = {
   title: string;
   property_owners: Array<{
     person_id: string;
-    people: { first_name: string; last_name: string }[] | null;
+    people: { first_name: string; last_name: string } | null;
   }> | null;
 };
 
@@ -29,7 +29,7 @@ type DocumentRow = {
   id: string;
   title: string;
   document_type: string;
-  people: { first_name: string; last_name: string }[] | null;
+  people: { first_name: string; last_name: string } | null;
 };
 
 type EntityRelationshipRow = {

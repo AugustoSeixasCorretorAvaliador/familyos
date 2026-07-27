@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import type { Json } from "@/lib/supabase/database.types";
 
 type LogTimelineEventInput = {
   familyId: string;
@@ -8,8 +9,8 @@ type LogTimelineEventInput = {
   responsiblePersonId?: string | null;
   priority?: "low" | "medium" | "high" | "critical";
   source?: string;
-  newState?: Record<string, unknown> | null;
-  previousState?: Record<string, unknown> | null;
+  newState?: Json | null;
+  previousState?: Json | null;
 };
 
 export async function logTimelineEvent(input: LogTimelineEventInput) {

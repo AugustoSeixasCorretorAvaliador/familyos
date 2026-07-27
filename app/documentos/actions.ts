@@ -332,11 +332,11 @@ export async function intakeDocumentFile(
         mime_type: file.type || "application/octet-stream",
         version,
         is_current: true,
-        status: input.skipOcr
+        status: (input.skipOcr
           ? "active"
           : isNew
             ? "pending"
-            : previous?.status ?? "active",
+            : previous?.status ?? "active") as "active" | "inactive" | "pending" | "expired" | "archived" | "cancelled",
         processing_status: input.skipOcr
           ? DOCUMENT_STATUS.confirmed
           : DOCUMENT_STATUS.uploaded,

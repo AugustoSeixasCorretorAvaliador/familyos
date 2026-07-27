@@ -25,7 +25,7 @@ export async function bootstrapFamily(formData: FormData) {
 
   const { error } = await supabase.rpc("bootstrap_family", {
     p_family_name: familyName,
-    p_description: null,
+    p_description: undefined,
   });
 
   if (error) {
@@ -63,7 +63,10 @@ export async function createFamilyInvitation(
   }
 
   const email = (formData.get("email") as string | null)?.trim().toLowerCase();
-  const role = (formData.get("role") as string | null) || "member";
+  const requestedRole = (formData.get("role") as string | null) || "member";
+  const role = (["owner", "admin", "member", "viewer"] as const).find(
+    (candidate) => candidate === requestedRole
+  ) ?? "member";
 
   if (!email) {
     return { error: "Informe o e-mail do familiar.", invitationUrl: null };
