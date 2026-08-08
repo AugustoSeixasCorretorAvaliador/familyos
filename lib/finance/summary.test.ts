@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, isCardCategoryName, monthlyEntryAmount, pendingEntriesTotal, placeCardCategoriesLast, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import { cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, installmentProgressLabel, isCardCategoryName, monthlyEntryAmount, pendingEntriesTotal, placeCardCategoriesLast, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { FinancialEntryRow } from "@/lib/finance/types";
 
 function entry(overrides: Partial<FinancialEntryRow> = {}) {
@@ -116,5 +116,11 @@ describe("resumo financeiro mensal", () => {
       "single-a",
       "single-z",
     ]);
+  });
+
+  it("formata o progresso dos parcelamentos com dois dígitos", () => {
+    expect(installmentProgressLabel(entry({ installment_number: 4, installment_count: 12 }))).toBe("PARC: 04/12");
+    expect(installmentProgressLabel(entry({ installment_number: 12, installment_count: 12 }))).toBe("PARC: 12/12");
+    expect(installmentProgressLabel(entry({ installment_number: null, installment_count: null }))).toBeNull();
   });
 });

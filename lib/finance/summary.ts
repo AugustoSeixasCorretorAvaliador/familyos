@@ -24,6 +24,13 @@ export function sortEntriesAlphabetically(entries: FinancialEntryRow[]) {
   return [...entries].sort((left, right) => left.description.localeCompare(right.description, "pt-BR", { sensitivity: "base" }));
 }
 
+export function installmentProgressLabel(entry: FinancialEntryRow) {
+  if (!entry.installment_number || !entry.installment_count) return null;
+  const current = String(entry.installment_number).padStart(2, "0");
+  const total = String(entry.installment_count).padStart(2, "0");
+  return `PARC: ${current}/${total}`;
+}
+
 function cardEntryKind(entry: FinancialEntryRow) {
   if (entry.recurrence_id || entry.purchase_kind === "recurring" || entry.origin === "recurrence") return 0;
   if (entry.installment_purchase_id || entry.purchase_kind === "installment" || entry.origin === "installment") return 1;
