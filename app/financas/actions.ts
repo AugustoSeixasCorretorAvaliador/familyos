@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { randomUUID } from "node:crypto";
 import { reportActionError } from "@/lib/action-error";
 import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
+import { findCardCategoryId } from "@/lib/finance/card-category";
 import { generateMonthlyOccurrences, splitInstallments } from "@/lib/finance/domain";
 import { assertNoClientFamilyId, CATEGORY_TYPES, competenceValue, dateValue, ENTRY_STATUSES, ENTRY_TYPES, FinanceValidationError, integerValue, moneyValue, oneOf, optionalId, textValue, validatePercentage } from "@/lib/finance/validation";
 import { createClient } from "@/lib/supabase/server";
@@ -51,6 +52,23 @@ function actionFailure(error: unknown, context: Context, action: string, view: s
   if (error instanceof FinanceValidationError) redirect(financeUrl(view, preserveSelectedCompetence({ ...values, error: error.code })));
   const result = reportActionError({ error, userId: context.user.id, familyId: context.family.id, module: "financas", action, fallback: "unknown" });
   redirect(financeUrl(view, preserveSelectedCompetence({ ...values, error: result.code, request_id: result.requestId })));
+}
+
+async function installmentCategories(familyId: string, cardId: string | null, selectedCategoryId: string | null) {
+  if (!cardId) return { categoryId: selectedCategoryId, classificationCategoryId: null };
+  const db = createClient();
+  const [{ data: card, error: cardError }, { data: categories, error: categoriesError }] = await Promise.all([
+    db.from("credit_cards").select("name").eq("id", cardId).eq("family_id", familyId).is("deleted_at", null).maybeSingle(),
+    db.from("financial_categories").select("id,name").eq("family_id", familyId).eq("active", true).is("deleted_at", null),
+  ]);
+  if (cardError || !card) throw cardError ?? new FinanceValidationError("not_found");
+  if (categoriesError) throw categoriesError;
+  const cardCategoryId = findCardCategoryId(card.name, categories ?? []);
+  if (!cardCategoryId) return { categoryId: selectedCategoryId, classificationCategoryId: null };
+  return {
+    categoryId: cardCategoryId,
+    classificationCategoryId: selectedCategoryId && selectedCategoryId !== cardCategoryId ? selectedCategoryId : null,
+  };
 }
 
 export async function createAccount(formData: FormData) {
@@ -497,9 +515,11 @@ export async function createInstallmentPurchase(formData: FormData) {
   const context = await requireEditor();
   try {
     assertNoClientFamilyId(formData); const total = moneyValue(formData.get("total_amount"), true)!; const count = integerValue(formData.get("installment_count"), { min: 1, max: 360, required: true })!; const first = competenceValue(formData.get("first_competence")); const description = textValue(formData.get("description"), true)!;
-    const db = createClient(); const { data: purchase, error } = await db.from("installment_purchases").insert({ family_id: context.family.id, created_by: context.user.id, description, total_amount: total, installment_count: count, first_competence: first, purchase_date: dateValue(formData.get("purchase_date")), card_id: optionalId(formData, "card_id"), category_id: optionalId(formData, "category_id"), responsible_person_id: optionalId(formData, "responsible_person_id") }).select("id").single(); if (error) throw error;
+    const cardId = optionalId(formData, "card_id"); const selectedCategoryId = optionalId(formData, "category_id");
+    const { categoryId, classificationCategoryId } = await installmentCategories(context.family.id, cardId, selectedCategoryId);
+    const db = createClient(); const { data: purchase, error } = await db.from("installment_purchases").insert({ family_id: context.family.id, created_by: context.user.id, description, total_amount: total, installment_count: count, first_competence: first, purchase_date: dateValue(formData.get("purchase_date")), card_id: cardId, category_id: categoryId, responsible_person_id: optionalId(formData, "responsible_person_id") }).select("id").single(); if (error) throw error;
     const cents = splitInstallments(Math.round(total * 100), count); const start = new Date(`${first}T00:00:00Z`);
-    const rows: FinancialEntryInsert[] = cents.map((value, index) => { const date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + index, 1)).toISOString().slice(0, 10); return { family_id: context.family.id, created_by: context.user.id, description: `${description} (${index + 1}/${count})`, competence: date, entry_type: "expense", cash_direction: "none", expected_amount: value / 100, status: "planned", origin: "installment", purchase_kind: "installment", installment_purchase_id: purchase.id, installment_number: index + 1, installment_count: count, card_id: optionalId(formData, "card_id"), category_id: optionalId(formData, "category_id"), source_key: `installment:${purchase.id}:${index + 1}` }; });
+    const rows: FinancialEntryInsert[] = cents.map((value, index) => { const date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + index, 1)).toISOString().slice(0, 10); return { family_id: context.family.id, created_by: context.user.id, description: `${description} (${index + 1}/${count})`, competence: date, entry_type: "expense", cash_direction: "none", expected_amount: value / 100, status: "planned", origin: "installment", purchase_kind: "installment", installment_purchase_id: purchase.id, installment_number: index + 1, installment_count: count, card_id: cardId, category_id: categoryId, classification_category_id: classificationCategoryId, source_key: `installment:${purchase.id}:${index + 1}` }; });
     const { error: entriesError } = await db.from("financial_entries").insert(rows);
     if (entriesError) {
       await db.from("installment_purchases").update({ deleted_at: new Date().toISOString(), status: "cancelled", updated_by: context.user.id }).eq("id", purchase.id).eq("family_id", context.family.id);
@@ -520,7 +540,8 @@ export async function updateInstallmentPurchase(formData: FormData) {
     const description = textValue(formData.get("description"), true)!;
     const purchaseDate = dateValue(formData.get("purchase_date"));
     const cardId = optionalId(formData, "card_id");
-    const categoryId = optionalId(formData, "category_id");
+    const selectedCategoryId = optionalId(formData, "category_id");
+    const { categoryId, classificationCategoryId } = await installmentCategories(context.family.id, cardId, selectedCategoryId);
     const responsiblePersonId = optionalId(formData, "responsible_person_id");
     const db = createClient();
     const { data: purchase, error: purchaseReadError } = await db.from("installment_purchases")
@@ -546,7 +567,7 @@ export async function updateInstallmentPurchase(formData: FormData) {
         description: `${description} (${index + 1}/${count})`, competence: date, entry_type: "expense", cash_direction: "none",
         expected_amount: value / 100, actual_amount: null, status: "planned", origin: "installment", purchase_kind: "installment",
         installment_purchase_id: id, installment_number: index + 1, installment_count: count,
-        card_id: cardId, category_id: categoryId, responsible_person_id: responsiblePersonId,
+        card_id: cardId, category_id: categoryId, classification_category_id: classificationCategoryId, responsible_person_id: responsiblePersonId,
         source_key: `installment:${id}:${index + 1}`,
       };
     });
