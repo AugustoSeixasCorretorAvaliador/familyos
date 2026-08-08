@@ -38,7 +38,10 @@ export function Empty({ children }: { children: ReactNode }) {
 }
 
 export function ArchiveForm({ id, entity, label = "Arquivar", returnView, returnCompetence, incomeOrder, expenseOrder }: { id: string; entity: string; label?: string; returnView?: "overview" | "movements"; returnCompetence?: string; incomeOrder?: string; expenseOrder?: string }) {
-  return <form action={archiveFinanceRecord}><input type="hidden" name="id" value={id}/><input type="hidden" name="entity" value={entity}/>{returnView && <input type="hidden" name="return_view" value={returnView}/>} {returnCompetence && <input type="hidden" name="return_competence" value={returnCompetence}/>} {incomeOrder && <input type="hidden" name="income_order" value={incomeOrder}/>} {expenseOrder && <input type="hidden" name="expense_order" value={expenseOrder}/>}<ConfirmSubmitButton label={label} confirmMessage="Esta ação arquiva o registro sem apagar o histórico. Deseja continuar?" className={danger}/></form>;
+  const confirmMessage = entity === "entry"
+    ? "Somente este lançamento será arquivado. Parcelas e recorrências dos outros meses permanecerão ativas. Deseja continuar?"
+    : "Esta ação arquiva o registro sem apagar o histórico. Deseja continuar?";
+  return <form action={archiveFinanceRecord}><input type="hidden" name="id" value={id}/><input type="hidden" name="entity" value={entity}/>{returnView && <input type="hidden" name="return_view" value={returnView}/>} {returnCompetence && <input type="hidden" name="return_competence" value={returnCompetence}/>} {incomeOrder && <input type="hidden" name="income_order" value={incomeOrder}/>} {expenseOrder && <input type="hidden" name="expense_order" value={expenseOrder}/>}<ConfirmSubmitButton label={label} confirmMessage={confirmMessage} className={danger}/></form>;
 }
 
 export function EntryFields({ workspace, entry, defaultCompetence }: { workspace: FinanceWorkspace; entry?: FinancialEntryRow; defaultCompetence?: string }) {

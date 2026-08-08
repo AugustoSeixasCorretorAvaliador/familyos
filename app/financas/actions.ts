@@ -424,6 +424,43 @@ export async function toggleEntrySettlement(formData: FormData) {
   feedback("overview", "settlement_updated", returnValues);
 }
 
+export async function toggleCardSettlement(formData: FormData) {
+  const context = await requireEditor();
+  const competence = textValue(formData.get("competence"))?.slice(0, 7);
+  const returnValues = {
+    competence,
+    income_order: textValue(formData.get("income_order")) ?? undefined,
+    expense_order: textValue(formData.get("expense_order")) ?? undefined,
+  };
+  try {
+    assertNoClientFamilyId(formData);
+    const cardId = textValue(formData.get("card_id"), true)!;
+    const month = competenceValue(formData.get("competence"));
+    const settled = formData.get("settled") === "true";
+    const db = createClient();
+    const { data: entries, error: readError } = await db.from("financial_entries")
+      .select("id,expected_amount,source_key")
+      .eq("family_id", context.family.id).eq("card_id", cardId).eq("competence", month)
+      .eq("entry_type", "expense").is("deleted_at", null).neq("status", "cancelled");
+    if (readError) throw readError;
+    const individualEntries = (entries ?? []).filter((entry) => !entry.source_key?.startsWith("card-balance:"));
+    const effectiveDate = settled ? new Date().toISOString().slice(0, 10) : null;
+    // Limita a concorrência para cartões com muitos lançamentos e evita repetir
+    // a tempestade de requisições que anteriormente causava timeout em Finanças.
+    for (let index = 0; index < individualEntries.length; index += 8) {
+      const updates = await Promise.all(individualEntries.slice(index, index + 8).map((entry) => db.from("financial_entries").update({
+        actual_amount: settled ? entry.expected_amount : null,
+        effective_date: effectiveDate,
+        status: settled ? "paid" : "payable",
+        updated_by: context.user.id,
+      }).eq("id", entry.id).eq("family_id", context.family.id).is("deleted_at", null)));
+      const failed = updates.find((result) => result.error);
+      if (failed?.error) throw failed.error;
+    }
+  } catch (error) { actionFailure(error, context, "toggle_card_settlement", "overview", returnValues); }
+  feedback("overview", "card_settlement_updated", returnValues);
+}
+
 export async function markEntryPaid(formData: FormData) {
   const context = await requireEditor();
   const returnValues = { competence: textValue(formData.get("return_competence"))?.slice(0, 7) };
@@ -737,29 +774,10 @@ export async function archiveFinanceRecord(formData: FormData) {
     else if (entity === "card") ({ error } = await db.from("credit_cards").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
     else if (entity === "entry") {
       const { data: entry, error: readError } = await db.from("financial_entries")
-        .select("id,competence,recurrence_id,metadata")
+        .select("id")
         .eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
       if (readError || !entry) throw readError ?? new Error("not_found");
       ({ error } = await db.from("financial_entries").update({ deleted_at: now, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
-      if (error) throw error;
-      const seriesId = typeof entry.metadata === "object" && entry.metadata && !Array.isArray(entry.metadata)
-        ? String(entry.metadata.projection_series_id ?? "")
-        : "";
-      if (seriesId) {
-        ({ error } = await db.from("financial_entries").update({ deleted_at: now, updated_by: context.user.id })
-          .eq("family_id", context.family.id).gt("competence", entry.competence)
-          .contains("metadata", { projection_series_id: seriesId }).is("deleted_at", null));
-      } else if (entry.recurrence_id) {
-        ({ error } = await db.from("financial_entries").update({ deleted_at: now, updated_by: context.user.id })
-          .eq("family_id", context.family.id).eq("recurrence_id", entry.recurrence_id)
-          .gt("competence", entry.competence).is("deleted_at", null));
-      }
-      if (error) throw error;
-      if (entry.recurrence_id) {
-        const end = new Date(`${entry.competence}T00:00:00Z`); end.setUTCDate(end.getUTCDate() - 1);
-        ({ error } = await db.from("recurrences").update({ active: false, end_date: end.toISOString().slice(0, 10), next_occurrence: null, updated_by: context.user.id })
-          .eq("id", entry.recurrence_id).eq("family_id", context.family.id).is("deleted_at", null));
-      }
     }
     else if (entity === "asset") ({ error } = await db.from("investment_assets").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
     else if (entity === "property") ({ error } = await db.from("properties").update({ deleted_at: now, status: "archived", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));

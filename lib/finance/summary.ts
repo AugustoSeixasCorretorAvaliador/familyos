@@ -12,6 +12,14 @@ export function settledEntriesTotal(entries: FinancialEntryRow[]) {
   }, 0);
 }
 
+export function expectedEntriesTotal(entries: FinancialEntryRow[]) {
+  return entries.reduce((sum, entry) => sum + (entry.entry_type === "reversal" ? -entry.expected_amount : entry.expected_amount), 0);
+}
+
+export function pendingEntriesTotal(entries: FinancialEntryRow[]) {
+  return expectedEntriesTotal(entries) - settledEntriesTotal(entries);
+}
+
 export function sortEntriesAlphabetically(entries: FinancialEntryRow[]) {
   return [...entries].sort((left, right) => left.description.localeCompare(right.description, "pt-BR", { sensitivity: "base" }));
 }

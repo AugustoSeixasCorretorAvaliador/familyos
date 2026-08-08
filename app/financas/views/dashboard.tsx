@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { createMonthlyProjection, toggleEntrySettlement } from "@/app/financas/actions";
+import { createMonthlyProjection, toggleCardSettlement, toggleEntrySettlement } from "@/app/financas/actions";
 import { buildTimeline, calculateDashboard, cashflowEntriesForMonth, monthlyEntryAmount } from "@/lib/finance/services";
-import { isCardCategoryName, placeCardCategoriesLast, settledEntriesTotal, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import { isCardCategoryName, pendingEntriesTotal, placeCardCategoriesLast, settledEntriesTotal, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { FinanceWorkspace, FinancialEntryRow } from "@/lib/finance/types";
 import { ArchiveForm, currency, Empty, field, monthLabel, Options, panel, SaveButton } from "@/app/financas/views/shared";
 
@@ -53,12 +53,17 @@ function MonthlyEntryList({ title, entries, workspace, competence, kind, orderMo
     return `/financas?${params.toString()}`;
   };
   const settledLabel = kind === "income" ? "RECEBIDO" : "PAGO";
-  const totalTitle = kind === "income" ? "Receitas do mês" : "Despesas do mês";
+  const pendingLabel = kind === "income" ? "A RECEBER" : "A PAGAR";
+  const settledTotal = settledEntriesTotal(entries);
+  const pendingTotal = pendingEntriesTotal(entries);
   return <section className={panel}>
     <div className="flex items-center justify-between gap-3"><h2 className="font-semibold text-slate-900">{title}</h2><span className="text-sm font-semibold text-slate-700">{currency.format(entries.reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0))}</span></div>
     <div className="mt-3 flex flex-wrap items-center gap-2 text-xs"><span className="font-medium text-slate-500">Ordenar:</span><Link href={orderHref("alpha")} className={`rounded-full border px-3 py-1.5 font-semibold ${orderMode === "alpha" ? "border-sky-600 bg-sky-50 text-sky-700" : "border-slate-200 text-slate-600"}`}>Alfabético</Link><Link href={orderHref("category")} className={`rounded-full border px-3 py-1.5 font-semibold ${orderMode === "category" ? "border-sky-600 bg-sky-50 text-sky-700" : "border-slate-200 text-slate-600"}`}>Por categoria</Link></div>
     {entries.length ? <div className="mt-4 space-y-4">{groups.map(([groupName, groupEntries]) => {
       const groupTotal = currency.format(groupEntries.reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0));
+      const cardId = groupEntries.find((entry) => entry.card_id)?.card_id ?? null;
+      const individualCardEntries = cardId ? groupEntries.filter((entry) => entry.card_id === cardId && entry.entry_type === "expense" && !entry.source_key?.startsWith("card-balance:")) : [];
+      const cardPaid = individualCardEntries.length > 0 && individualCardEntries.every((entry) => entry.actual_amount !== null);
       const entryRows = <div className="divide-y divide-slate-100">{groupEntries.map((entry) => {
       const isSettled = entry.actual_amount !== null;
       const editParams = new URLSearchParams({ view: "movements", competence: entry.competence.slice(0, 7), q: entry.description, return_view: "overview", return_competence: competence.slice(0, 7), income_order: incomeOrder, expense_order: expenseOrder });
@@ -74,6 +79,7 @@ function MonthlyEntryList({ title, entries, workspace, competence, kind, orderMo
             <h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">{groupName}</h3>
             <span className="flex shrink-0 items-center gap-3">
               <span className="text-xs font-semibold text-slate-500">{groupTotal}</span>
+              {canEdit && cardId && individualCardEntries.length > 0 && <form action={toggleCardSettlement}><input type="hidden" name="card_id" value={cardId}/><input type="hidden" name="competence" value={competence.slice(0, 7)}/><input type="hidden" name="settled" value={String(!cardPaid)}/><input type="hidden" name="income_order" value={incomeOrder}/><input type="hidden" name="expense_order" value={expenseOrder}/><button type="submit" aria-pressed={cardPaid} title={`Marcar todas as despesas do cartão como ${cardPaid ? "não pagas" : "pagas"}`} className={`rounded-full px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition ${cardPaid ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}`}>PAGO · {cardPaid ? "ON" : "OFF"}</button></form>}
               <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-full bg-white text-sm font-bold text-sky-700 shadow-sm">
                 <span className="group-open:hidden">+</span>
                 <span className="hidden group-open:inline">V</span>
@@ -86,7 +92,7 @@ function MonthlyEntryList({ title, entries, workspace, competence, kind, orderMo
 
       return <div key={groupName || "all"}>{groupName && <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2"><h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">{groupName}</h3><span className="text-xs font-semibold text-slate-500">{groupTotal}</span></div>}{entryRows}</div>;
     })}</div> : <Empty>Nenhum valor cadastrado neste mês.</Empty>}
-    <div className={`mt-5 rounded-2xl border p-4 ${kind === "income" ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}><p className={`text-xs font-bold uppercase tracking-wider ${kind === "income" ? "text-emerald-700" : "text-amber-700"}`}>{totalTitle}</p><div className="mt-2 flex items-end justify-between gap-3"><span className="text-xs font-semibold text-slate-600">TOTAL {settledLabel}</span><strong className="text-xl tabular-nums text-slate-900">{currency.format(settledEntriesTotal(entries))}</strong></div></div>
+    <div className="mt-5 grid gap-3 sm:grid-cols-2"><div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><span className="text-xs font-bold uppercase tracking-wider text-emerald-700">TOTAL {settledLabel}</span><strong className="mt-2 block text-xl tabular-nums text-slate-900">{currency.format(settledTotal)}</strong></div><div className="rounded-2xl border border-red-200 bg-red-50 p-4"><span className="text-xs font-bold uppercase tracking-wider text-red-700">TOTAL {pendingLabel}</span><strong className="mt-2 block text-xl tabular-nums text-slate-900">{currency.format(pendingTotal)}</strong></div></div>
   </section>;
 }
 

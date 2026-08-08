@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cashflowEntriesForBalance, effectiveCashflowEntries, isCardCategoryName, monthlyEntryAmount, placeCardCategoriesLast, settledEntriesTotal, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import { cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, isCardCategoryName, monthlyEntryAmount, pendingEntriesTotal, placeCardCategoriesLast, settledEntriesTotal, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { FinancialEntryRow } from "@/lib/finance/types";
 
 function entry(overrides: Partial<FinancialEntryRow> = {}) {
@@ -66,6 +66,16 @@ describe("resumo financeiro mensal", () => {
       entry({ actual_amount: null, expected_amount: 120 }),
       entry({ actual_amount: 0 }),
     ])).toBe(80);
+  });
+
+  it("calcula o total esperado e a diferença ainda pendente", () => {
+    const rows = [
+      entry({ expected_amount: 100, actual_amount: 100 }),
+      entry({ expected_amount: 120, actual_amount: null }),
+      entry({ entry_type: "reversal", expected_amount: 20, actual_amount: null }),
+    ];
+    expect(expectedEntriesTotal(rows)).toBe(200);
+    expect(pendingEntriesTotal(rows)).toBe(100);
   });
 
   it("ordena descrições alfabeticamente sem diferenciar acentos e caixa", () => {
