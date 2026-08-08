@@ -4,6 +4,14 @@ export function monthlyEntryAmount(entry: FinancialEntryRow) {
   return entry.actual_amount ?? entry.expected_amount;
 }
 
+export function settledEntriesTotal(entries: FinancialEntryRow[]) {
+  return entries.reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
+}
+
+export function sortEntriesAlphabetically(entries: FinancialEntryRow[]) {
+  return [...entries].sort((left, right) => left.description.localeCompare(right.description, "pt-BR", { sensitivity: "base" }));
+}
+
 function isConsolidatedCardBalance(entry: FinancialEntryRow) {
   return Boolean(entry.source_key?.startsWith("card-balance:"));
 }

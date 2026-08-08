@@ -19,17 +19,24 @@ async function requireEditor(): Promise<Context> {
   return context as Context;
 }
 
-function feedback(view: string, success: string) {
-  revalidatePath("/financas");
-  revalidatePath("/dashboard");
-  redirect(`/financas?view=${view}&success=${success}`);
+type RedirectValues = Record<string, string | undefined>;
+
+function financeUrl(view: string, values: RedirectValues = {}) {
+  const params = new URLSearchParams({ view });
+  for (const [key, value] of Object.entries(values)) if (value) params.set(key, value);
+  return `/financas?${params.toString()}`;
 }
 
-function actionFailure(error: unknown, context: Context, action: string, view: string) {
-  if (error instanceof FinanceValidationError) redirect(`/financas?view=${view}&error=${encodeURIComponent(error.code)}`);
+function feedback(view: string, success: string, values: RedirectValues = {}) {
+  revalidatePath("/financas");
+  revalidatePath("/dashboard");
+  redirect(financeUrl(view, { ...values, success }));
+}
+
+function actionFailure(error: unknown, context: Context, action: string, view: string, values: RedirectValues = {}) {
+  if (error instanceof FinanceValidationError) redirect(financeUrl(view, { ...values, error: error.code }));
   const result = reportActionError({ error, userId: context.user.id, familyId: context.family.id, module: "financas", action, fallback: "unknown" });
-  const params = new URLSearchParams({ view, error: result.code, request_id: result.requestId });
-  redirect(`/financas?${params.toString()}`);
+  redirect(financeUrl(view, { ...values, error: result.code, request_id: result.requestId }));
 }
 
 export async function createAccount(formData: FormData) {
@@ -229,13 +236,49 @@ export async function saveCardBalance(formData: FormData) {
 
 export async function updateEntry(formData: FormData) {
   const context = await requireEditor();
+  const returnView = formData.get("return_view") === "overview" ? "overview" : "movements";
+  const returnValues = {
+    competence: textValue(formData.get("return_competence"))?.slice(0, 7),
+    income_order: textValue(formData.get("income_order")) ?? undefined,
+    expense_order: textValue(formData.get("expense_order")) ?? undefined,
+  };
   try {
     const id = textValue(formData.get("id"), true)!;
     const payload = entryFromForm(formData, context);
     const { data, error } = await createClient().from("financial_entries").update({ ...payload, family_id: undefined, created_by: undefined, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
     if (error || !data) throw error ?? new Error("not_found");
-  } catch (error) { actionFailure(error, context, "update_entry", "movements"); }
-  feedback("movements", "updated");
+  } catch (error) { actionFailure(error, context, "update_entry", returnView, returnValues); }
+  feedback(returnView, "updated", returnValues);
+}
+
+export async function toggleEntrySettlement(formData: FormData) {
+  const context = await requireEditor();
+  const competence = textValue(formData.get("competence"))?.slice(0, 7);
+  const returnValues = {
+    competence,
+    income_order: textValue(formData.get("income_order")) ?? undefined,
+    expense_order: textValue(formData.get("expense_order")) ?? undefined,
+  };
+  try {
+    assertNoClientFamilyId(formData);
+    const id = textValue(formData.get("id"), true)!;
+    const settled = formData.get("settled") === "true";
+    const db = createClient();
+    const { data: entry, error: readError } = await db.from("financial_entries")
+      .select("id,entry_type,expected_amount")
+      .eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+    if (readError || !entry) throw readError ?? new Error("not_found");
+    if (!["income", "investment_yield", "expense"].includes(entry.entry_type)) throw new FinanceValidationError("invalid_entry_type");
+    const isIncome = entry.entry_type === "income" || entry.entry_type === "investment_yield";
+    const { data, error } = await db.from("financial_entries").update({
+      actual_amount: settled ? entry.expected_amount : null,
+      effective_date: settled ? new Date().toISOString().slice(0, 10) : null,
+      status: settled ? (isIncome ? "received" : "paid") : (isIncome ? "receivable" : "payable"),
+      updated_by: context.user.id,
+    }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    if (error || !data) throw error ?? new Error("not_found");
+  } catch (error) { actionFailure(error, context, "toggle_entry_settlement", "overview", returnValues); }
+  feedback("overview", "settlement_updated", returnValues);
 }
 
 export async function markEntryPaid(formData: FormData) {

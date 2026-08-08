@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effectiveCashflowEntries, monthlyEntryAmount } from "@/lib/finance/summary";
+import { effectiveCashflowEntries, monthlyEntryAmount, settledEntriesTotal, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { FinancialEntryRow } from "@/lib/finance/types";
 
 function entry(overrides: Partial<FinancialEntryRow> = {}) {
@@ -37,5 +37,18 @@ describe("resumo financeiro mensal", () => {
       entry({ id: "cancelled", status: "cancelled" }),
       entry({ id: "archived", deleted_at: "2026-08-07T00:00:00Z" }),
     ]).map((item) => item.id)).toEqual(["active"]);
+  });
+
+  it("soma somente lançamentos marcados como recebidos ou pagos", () => {
+    expect(settledEntriesTotal([
+      entry({ actual_amount: 80 }),
+      entry({ actual_amount: null, expected_amount: 120 }),
+      entry({ actual_amount: 0 }),
+    ])).toBe(80);
+  });
+
+  it("ordena descrições alfabeticamente sem diferenciar acentos e caixa", () => {
+    const rows = [entry({ id: "z", description: "Zeladoria" }), entry({ id: "a", description: "Água" }), entry({ id: "c", description: "condomínio" })];
+    expect(sortEntriesAlphabetically(rows).map((item) => item.id)).toEqual(["a", "c", "z"]);
   });
 });
