@@ -73,7 +73,7 @@ export default async function FinancasPage({ searchParams }: PageProps) {
     {view === "cards" && <CardsView workspace={workspace} competence={competence} canEdit={canEdit} canAdmin={canAdmin}/>}
     {view === "invoices" && <InvoicesView workspace={workspace} canEdit={canEdit}/>}
     {view === "installments" && <InstallmentsView workspace={workspace} canEdit={canEdit}/>}
-    {view === "recurrences" && <RecurrencesView workspace={workspace} canEdit={canEdit}/>}
+    {view === "recurrences" && <RecurrencesView workspace={workspace} competence={competence} canEdit={canEdit}/>}
     {view === "properties" && <PropertiesView workspace={workspace} canEdit={canEdit} canAdmin={canAdmin}/>}
     {view === "investments" && <InvestmentsView workspace={workspace} canEdit={canEdit} canAdmin={canAdmin}/>}
     {view === "categories" && <CategoriesView workspace={workspace} canEdit={canEdit} canAdmin={canAdmin}/>}

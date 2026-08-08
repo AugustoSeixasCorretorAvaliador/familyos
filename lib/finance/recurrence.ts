@@ -22,6 +22,12 @@ export function addCompetenceMonths(competence: string, months: number) {
   return date.toISOString().slice(0, 7) + "-01";
 }
 
+export function dayBeforeCompetence(competence: string) {
+  const date = new Date(`${competence.slice(0, 7)}-01T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
 export function monthlyOccurrenceDates(window: MonthlyRecurrenceWindow, throughCompetence: string) {
   const interval = Math.max(1, window.intervalMonths ?? 1);
   const start = new Date(`${window.startDate.slice(0, 10)}T00:00:00Z`);

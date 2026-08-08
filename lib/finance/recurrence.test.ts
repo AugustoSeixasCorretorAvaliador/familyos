@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCompetenceMonths, monthlyOccurrenceDates, recurrenceOccurrenceId } from "@/lib/finance/recurrence";
+import { addCompetenceMonths, dayBeforeCompetence, monthlyOccurrenceDates, recurrenceOccurrenceId } from "@/lib/finance/recurrence";
 
 describe("recorrências financeiras contínuas", () => {
   it("gera competências mensais até o horizonte consultado", () => {
@@ -17,6 +17,11 @@ describe("recorrências financeiras contínuas", () => {
   it("avança o horizonte sem depender do mês corrente", () => {
     expect(addCompetenceMonths("2026-09-01", 12)).toBe("2027-09-01");
     expect(monthlyOccurrenceDates({ startDate: "2026-08-01" }, "2047-08-01")).toHaveLength(253);
+  });
+
+  it("encerra no último dia anterior à competência selecionada", () => {
+    expect(dayBeforeCompetence("2026-09-01")).toBe("2026-08-31");
+    expect(dayBeforeCompetence("2027-01-01")).toBe("2026-12-31");
   });
 
   it("gera id estável por família, recorrência e ocorrência", () => {

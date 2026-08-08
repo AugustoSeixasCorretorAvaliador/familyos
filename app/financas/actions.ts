@@ -8,6 +8,7 @@ import { reportActionError } from "@/lib/action-error";
 import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
 import { findCardCategoryId } from "@/lib/finance/card-category";
 import { generateMonthlyOccurrences, splitInstallments } from "@/lib/finance/domain";
+import { dayBeforeCompetence } from "@/lib/finance/recurrence";
 import { assertNoClientFamilyId, CATEGORY_TYPES, competenceValue, dateValue, ENTRY_STATUSES, ENTRY_TYPES, FinanceValidationError, integerValue, moneyValue, oneOf, optionalId, textValue, validatePercentage } from "@/lib/finance/validation";
 import { createClient } from "@/lib/supabase/server";
 import type { FinancialEntryInsert } from "@/lib/finance/types";
@@ -526,9 +527,50 @@ export async function updateRecurrence(formData: FormData) {
 export async function endRecurrence(formData: FormData) {
   const context = await requireEditor();
   try {
-    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const endDate = dateValue(formData.get("end_date")) ?? new Date().toISOString().slice(0, 10);
-    const { data, error } = await createClient().from("recurrences").update({ active: false, end_date: endDate, next_occurrence: null, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
-    if (error || !data) throw error ?? new Error("not_found");
+    assertNoClientFamilyId(formData);
+    const id = textValue(formData.get("id"), true)!;
+    const fromCompetence = competenceValue(formData.get("from_competence"));
+    const db = createClient();
+    const { data: recurrence, error: recurrenceError } = await db.from("recurrences")
+      .select("id,active,end_date,next_occurrence")
+      .eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+    if (recurrenceError || !recurrence) throw recurrenceError ?? new FinanceValidationError("not_found");
+
+    const { data: realized, error: realizedError } = await db.from("financial_entries")
+      .select("id")
+      .eq("family_id", context.family.id)
+      .eq("recurrence_id", id)
+      .gte("competence", fromCompetence)
+      .is("deleted_at", null)
+      .not("actual_amount", "is", null)
+      .limit(1);
+    if (realizedError) throw realizedError;
+    if (realized?.length) throw new FinanceValidationError("recurrence_has_realized_future");
+
+    const endDate = dayBeforeCompetence(fromCompetence);
+    const now = new Date().toISOString();
+    const { data: ended, error: endError } = await db.from("recurrences")
+      .update({ active: false, end_date: endDate, next_occurrence: null, updated_by: context.user.id })
+      .eq("id", id).eq("family_id", context.family.id).is("deleted_at", null)
+      .select("id").maybeSingle();
+    if (endError || !ended) throw endError ?? new FinanceValidationError("not_found");
+
+    const { error: archiveError } = await db.from("financial_entries")
+      .update({ deleted_at: now, updated_by: context.user.id })
+      .eq("family_id", context.family.id)
+      .eq("recurrence_id", id)
+      .gte("competence", fromCompetence)
+      .is("deleted_at", null)
+      .is("actual_amount", null);
+    if (archiveError) {
+      await db.from("recurrences").update({
+        active: recurrence.active,
+        end_date: recurrence.end_date,
+        next_occurrence: recurrence.next_occurrence,
+        updated_by: context.user.id,
+      }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null);
+      throw archiveError;
+    }
   } catch (error) { actionFailure(error, context, "end_recurrence", "recurrences"); }
   feedback("recurrences", "ended");
 }

@@ -12,6 +12,7 @@ export type ActionErrorCode =
   | "duplicate"
   | "related_records"
   | "installment_locked"
+  | "recurrence_has_realized_future"
   | "not_found"
   | "file_not_found"
   | "signed_url_failed"
@@ -43,6 +44,7 @@ const ERROR_MESSAGES: Record<ActionErrorCode, string> = {
   duplicate: "Este registro ja existe.",
   related_records: "O registro possui dados relacionados e nao pode ser excluido.",
   installment_locked: "Este parcelamento possui parcela realizada, faturada ou ja foi cancelado e nao pode ser editado.",
+  recurrence_has_realized_future: "Existem ocorrencias futuras ja recebidas ou pagas. Desfaca essas baixas antes de encerrar a recorrencia.",
   not_found: "O registro nao foi encontrado ou nao esta acessivel.",
   file_not_found: "O arquivo solicitado nao foi encontrado.",
   signed_url_failed: "Nao foi possivel gerar o acesso privado ao arquivo.",
