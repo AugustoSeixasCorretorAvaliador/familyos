@@ -42,3 +42,10 @@ export function effectiveCashflowEntries(entries: FinancialEntryRow[]) {
 export function cashflowEntriesForMonth(entries: FinancialEntryRow[], competence: string) {
   return effectiveCashflowEntries(entries).filter((entry) => entry.competence === competence);
 }
+
+export function cashflowEntriesForBalance(entries: FinancialEntryRow[], competence: string, openingBalanceDate: string | null) {
+  const openingCompetence = openingBalanceDate ? `${openingBalanceDate.slice(0, 7)}-01` : null;
+  return effectiveCashflowEntries(entries).filter((entry) =>
+    entry.competence <= competence && (!openingCompetence || entry.competence >= openingCompetence)
+  );
+}

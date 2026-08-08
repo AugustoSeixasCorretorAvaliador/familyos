@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { reportActionError } from "@/lib/action-error";
 import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
@@ -27,16 +28,28 @@ function financeUrl(view: string, values: RedirectValues = {}) {
   return `/financas?${params.toString()}`;
 }
 
+function preserveSelectedCompetence(values: RedirectValues) {
+  if (values.competence) return values;
+  const referer = headers().get("referer");
+  if (!referer) return values;
+  try {
+    const competence = new URL(referer).searchParams.get("competence")?.slice(0, 7);
+    return competence ? { ...values, competence } : values;
+  } catch {
+    return values;
+  }
+}
+
 function feedback(view: string, success: string, values: RedirectValues = {}) {
   revalidatePath("/financas");
   revalidatePath("/dashboard");
-  redirect(financeUrl(view, { ...values, success }));
+  redirect(financeUrl(view, preserveSelectedCompetence({ ...values, success })));
 }
 
 function actionFailure(error: unknown, context: Context, action: string, view: string, values: RedirectValues = {}) {
-  if (error instanceof FinanceValidationError) redirect(financeUrl(view, { ...values, error: error.code }));
+  if (error instanceof FinanceValidationError) redirect(financeUrl(view, preserveSelectedCompetence({ ...values, error: error.code })));
   const result = reportActionError({ error, userId: context.user.id, familyId: context.family.id, module: "financas", action, fallback: "unknown" });
-  redirect(financeUrl(view, { ...values, error: result.code, request_id: result.requestId }));
+  redirect(financeUrl(view, preserveSelectedCompetence({ ...values, error: result.code, request_id: result.requestId })));
 }
 
 export async function createAccount(formData: FormData) {
@@ -136,9 +149,10 @@ function entryFromForm(formData: FormData, context: Context): FinancialEntryInse
 
 export async function createEntry(formData: FormData) {
   const context = await requireEditor();
+  const returnValues = { competence: textValue(formData.get("competence"))?.slice(0, 7) };
   try { const { error } = await createClient().from("financial_entries").insert(entryFromForm(formData, context)); if (error) throw error; }
-  catch (error) { actionFailure(error, context, "create_entry", "movements"); }
-  feedback("movements", "created");
+  catch (error) { actionFailure(error, context, "create_entry", "movements", returnValues); }
+  feedback("movements", "created", returnValues);
 }
 
 function addCompetenceMonths(competence: string, months: number) {
@@ -156,6 +170,7 @@ function dateForDay(competence: string, day: number | null) {
 
 export async function createMonthlyProjection(formData: FormData) {
   const context = await requireEditor();
+  const returnValues = { competence: textValue(formData.get("competence"))?.slice(0, 7) };
   try {
     assertNoClientFamilyId(formData);
     const entryType = oneOf(formData.get("entry_type"), ["income", "expense"] as const);
@@ -188,8 +203,8 @@ export async function createMonthlyProjection(formData: FormData) {
     });
     const { error } = await createClient().from("financial_entries").insert(rows);
     if (error) throw error;
-  } catch (error) { actionFailure(error, context, "create_monthly_projection", "overview"); }
-  feedback("overview", "projection_created");
+  } catch (error) { actionFailure(error, context, "create_monthly_projection", "overview", returnValues); }
+  feedback("overview", "projection_created", returnValues);
 }
 
 export async function saveCardBalance(formData: FormData) {
@@ -246,8 +261,73 @@ export async function updateEntry(formData: FormData) {
   try {
     const id = textValue(formData.get("id"), true)!;
     const payload = entryFromForm(formData, context);
-    const { data, error } = await createClient().from("financial_entries").update({ ...payload, family_id: undefined, created_by: undefined, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    const db = createClient();
+    const { data: existing, error: readError } = await db.from("financial_entries")
+      .select("id,competence,source_key,installment_purchase_id,recurrence_id,metadata")
+      .eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+    if (readError || !existing) throw readError ?? new Error("not_found");
+    const { data, error } = await db.from("financial_entries").update({ ...payload, family_id: undefined, created_by: undefined, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
     if (error || !data) throw error ?? new Error("not_found");
+
+    const sharedFuturePayload = {
+      entry_type: payload.entry_type,
+      cash_direction: payload.cash_direction,
+      expected_amount: payload.expected_amount,
+      category_id: payload.category_id,
+      classification_category_id: payload.classification_category_id,
+      account_id: payload.account_id,
+      card_id: payload.card_id,
+      responsible_person_id: payload.responsible_person_id,
+      property_id: payload.property_id,
+      property_unit_id: payload.property_unit_id,
+      lease_contract_id: payload.lease_contract_id,
+      investment_asset_id: payload.investment_asset_id,
+      notes: payload.notes,
+      updated_by: context.user.id,
+    };
+    const projectionSeriesId = typeof existing.metadata === "object" && existing.metadata && !Array.isArray(existing.metadata)
+      ? String(existing.metadata.projection_series_id ?? "")
+      : "";
+
+    if (projectionSeriesId) {
+      const { error: futureError } = await db.from("financial_entries")
+        .update({ ...sharedFuturePayload, description: payload.description })
+        .eq("family_id", context.family.id)
+        .gt("competence", existing.competence)
+        .contains("metadata", { projection_series_id: projectionSeriesId })
+        .is("actual_amount", null)
+        .is("deleted_at", null);
+      if (futureError) throw futureError;
+    } else if (existing.installment_purchase_id) {
+      const { error: futureError } = await db.from("financial_entries")
+        .update(sharedFuturePayload)
+        .eq("family_id", context.family.id)
+        .eq("installment_purchase_id", existing.installment_purchase_id)
+        .gt("competence", existing.competence)
+        .is("actual_amount", null)
+        .is("deleted_at", null);
+      if (futureError) throw futureError;
+    } else if (existing.recurrence_id) {
+      const { error: futureError } = await db.from("financial_entries")
+        .update({ ...sharedFuturePayload, description: payload.description })
+        .eq("family_id", context.family.id)
+        .eq("recurrence_id", existing.recurrence_id)
+        .gt("competence", existing.competence)
+        .is("actual_amount", null)
+        .is("deleted_at", null);
+      if (futureError) throw futureError;
+      const { error: recurrenceError } = await db.from("recurrences").update({
+        description: payload.description,
+        entry_type: payload.entry_type,
+        expected_amount: payload.expected_amount,
+        category_id: payload.category_id,
+        account_id: payload.account_id,
+        card_id: payload.card_id,
+        responsible_person_id: payload.responsible_person_id,
+        updated_by: context.user.id,
+      }).eq("id", existing.recurrence_id).eq("family_id", context.family.id).is("deleted_at", null);
+      if (recurrenceError) throw recurrenceError;
+    }
   } catch (error) { actionFailure(error, context, "update_entry", returnView, returnValues); }
   feedback(returnView, "updated", returnValues);
 }
@@ -284,32 +364,35 @@ export async function toggleEntrySettlement(formData: FormData) {
 
 export async function markEntryPaid(formData: FormData) {
   const context = await requireEditor();
+  const returnValues = { competence: textValue(formData.get("return_competence"))?.slice(0, 7) };
   try {
     assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const actual = moneyValue(formData.get("actual_amount"), true)!; const effective = dateValue(formData.get("effective_date"), true)!;
     const db = createClient(); const { data: entry, error: readError } = await db.from("financial_entries").select("entry_type").eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
     if (readError || !entry) throw readError ?? new Error("not_found");
     const status = ["income", "investment_redemption", "investment_yield"].includes(entry.entry_type) ? "received" : "paid";
     const { error } = await db.from("financial_entries").update({ actual_amount: actual, effective_date: effective, status, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id); if (error) throw error;
-  } catch (error) { actionFailure(error, context, "mark_entry_paid", "movements"); }
-  feedback("movements", "paid");
+  } catch (error) { actionFailure(error, context, "mark_entry_paid", "movements", returnValues); }
+  feedback("movements", "paid", returnValues);
 }
 
 export async function undoEntryPayment(formData: FormData) {
   const context = await requireEditor();
+  const returnValues = { competence: textValue(formData.get("return_competence"))?.slice(0, 7) };
   try { assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const { error } = await createClient().from("financial_entries").update({ actual_amount: null, effective_date: null, status: "planned", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null); if (error) throw error; }
-  catch (error) { actionFailure(error, context, "undo_payment", "movements"); }
-  feedback("movements", "payment_undone");
+  catch (error) { actionFailure(error, context, "undo_payment", "movements", returnValues); }
+  feedback("movements", "payment_undone", returnValues);
 }
 
 export async function createTransfer(formData: FormData) {
   const context = await requireEditor();
+  const returnValues = { competence: textValue(formData.get("competence"))?.slice(0, 7) };
   try {
     assertNoClientFamilyId(formData); const from = optionalId(formData, "from_account_id"); const to = optionalId(formData, "to_account_id"); if (!from || !to || from === to) throw new FinanceValidationError("invalid_transfer");
     const amount = moneyValue(formData.get("amount"), true)!; const competence = competenceValue(formData.get("competence")); const date = dateValue(formData.get("effective_date"), true)!; const group = crypto.randomUUID(); const description = textValue(formData.get("description")) ?? "Transferência entre contas";
     const common = { family_id: context.family.id, created_by: context.user.id, description, competence, entry_type: "transfer", expected_amount: amount, actual_amount: amount, effective_date: date, expected_date: date, status: "paid", origin: "manual", transfer_group_id: group } as const;
     const { error } = await createClient().from("financial_entries").insert([{ ...common, account_id: from, cash_direction: "outflow", source_key: `transfer:${group}:out` }, { ...common, account_id: to, cash_direction: "inflow", source_key: `transfer:${group}:in` }]); if (error) throw error;
-  } catch (error) { actionFailure(error, context, "create_transfer", "movements"); }
-  feedback("movements", "transfer_created");
+  } catch (error) { actionFailure(error, context, "create_transfer", "movements", returnValues); }
+  feedback("movements", "transfer_created", returnValues);
 }
 
 export async function createRecurrence(formData: FormData) {
@@ -492,6 +575,12 @@ export async function createInvestmentPosition(formData: FormData) {
 export async function archiveFinanceRecord(formData: FormData) {
   const context = await requireEditor();
   if (!canAdminFamily(context)) redirect("/financas?error=permission_denied");
+  const returnView = formData.get("return_view") === "movements" ? "movements" : "overview";
+  const returnValues = {
+    competence: textValue(formData.get("return_competence"))?.slice(0, 7),
+    income_order: textValue(formData.get("income_order")) ?? undefined,
+    expense_order: textValue(formData.get("expense_order")) ?? undefined,
+  };
   try {
     assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const entity = textValue(formData.get("entity"), true)!; const now = new Date().toISOString(); const db = createClient(); let error: { message: string } | null = null;
     if (entity === "account") ({ error } = await db.from("accounts").update({ deleted_at: now, status: "archived", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
@@ -501,6 +590,6 @@ export async function archiveFinanceRecord(formData: FormData) {
     else if (entity === "asset") ({ error } = await db.from("investment_assets").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
     else if (entity === "property") ({ error } = await db.from("properties").update({ deleted_at: now, status: "archived", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
     else throw new FinanceValidationError("invalid_entity"); if (error) throw error;
-  } catch (error) { actionFailure(error, context, "archive_record", "overview"); }
-  feedback("overview", "archived");
+  } catch (error) { actionFailure(error, context, "archive_record", returnView, returnValues); }
+  feedback(returnView, "archived", returnValues);
 }

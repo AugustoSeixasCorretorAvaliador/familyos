@@ -5,7 +5,7 @@ export type { FinanceImportCommitResult, FinanceImportPreview, ImportPreviewCoun
 
 import { createClient } from "@/lib/supabase/server";
 import { decodeEntryCursor, encodeEntryCursor } from "@/lib/finance/pagination";
-import { effectiveCashflowEntries, monthlyEntryAmount } from "@/lib/finance/summary";
+import { cashflowEntriesForBalance, effectiveCashflowEntries, monthlyEntryAmount } from "@/lib/finance/summary";
 import type { DashboardMetrics, FinanceFilters, FinanceWorkspace, FinancialEntryPage, FinancialEntryRow } from "@/lib/finance/types";
 
 export { cashflowEntriesForMonth, monthlyEntryAmount } from "@/lib/finance/summary";
@@ -123,11 +123,18 @@ export function filterEntries(entries: FinancialEntryRow[], filters: FinanceFilt
 export function calculateDashboard(workspace: FinanceWorkspace, competence: string, today = new Date().toISOString().slice(0, 10)): DashboardMetrics {
   const activeEntries = effectiveCashflowEntries(workspace.entries);
   const month = activeEntries.filter((entry) => entry.competence === competence);
+  const openingBalanceDate = workspace.accounts
+    .map((account) => account.opening_balance_date)
+    .filter((date): date is string => Boolean(date))
+    .sort()[0] ?? null;
+  const balanceEntries = cashflowEntriesForBalance(workspace.entries, competence, openingBalanceDate);
   const isIncome = (entry: FinancialEntryRow) => ["income", "investment_yield"].includes(entry.entry_type);
   const isExpense = (entry: FinancialEntryRow) => entry.entry_type === "expense";
-  const cashIn = activeEntries.filter((entry) => entry.cash_direction === "inflow").reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
-  const cashOut = activeEntries.filter((entry) => entry.cash_direction === "outflow").reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
-  const opening = workspace.accounts.reduce((sum, account) => sum + account.opening_balance, 0);
+  const cashIn = balanceEntries.filter((entry) => entry.cash_direction === "inflow").reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
+  const cashOut = balanceEntries.filter((entry) => entry.cash_direction === "outflow").reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
+  const opening = workspace.accounts
+    .filter((account) => !account.opening_balance_date || account.opening_balance_date <= competence)
+    .reduce((sum, account) => sum + account.opening_balance, 0);
   const expectedIncome = month.filter(isIncome).reduce((sum, entry) => sum + entry.expected_amount, 0);
   const actualIncome = month.filter(isIncome).reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
   const expectedExpense = month.filter(isExpense).reduce((sum, entry) => sum + entry.expected_amount, 0);

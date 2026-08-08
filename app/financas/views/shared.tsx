@@ -37,16 +37,16 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">{children}</div>;
 }
 
-export function ArchiveForm({ id, entity, label = "Arquivar" }: { id: string; entity: string; label?: string }) {
-  return <form action={archiveFinanceRecord}><input type="hidden" name="id" value={id}/><input type="hidden" name="entity" value={entity}/><ConfirmSubmitButton label={label} confirmMessage="Esta ação arquiva o registro sem apagar o histórico. Deseja continuar?" className={danger}/></form>;
+export function ArchiveForm({ id, entity, label = "Arquivar", returnView, returnCompetence, incomeOrder, expenseOrder }: { id: string; entity: string; label?: string; returnView?: "overview" | "movements"; returnCompetence?: string; incomeOrder?: string; expenseOrder?: string }) {
+  return <form action={archiveFinanceRecord}><input type="hidden" name="id" value={id}/><input type="hidden" name="entity" value={entity}/>{returnView && <input type="hidden" name="return_view" value={returnView}/>} {returnCompetence && <input type="hidden" name="return_competence" value={returnCompetence}/>} {incomeOrder && <input type="hidden" name="income_order" value={incomeOrder}/>} {expenseOrder && <input type="hidden" name="expense_order" value={expenseOrder}/>}<ConfirmSubmitButton label={label} confirmMessage="Esta ação arquiva o registro sem apagar o histórico. Deseja continuar?" className={danger}/></form>;
 }
 
-export function EntryFields({ workspace, entry }: { workspace: FinanceWorkspace; entry?: FinancialEntryRow }) {
+export function EntryFields({ workspace, entry, defaultCompetence }: { workspace: FinanceWorkspace; entry?: FinancialEntryRow; defaultCompetence?: string }) {
   const people = workspace.people.map((person) => ({ id: person.id, label: `${person.first_name} ${person.last_name}` }));
   return <>
     <input name="description" required defaultValue={entry?.description} placeholder="Descrição" className={`${field} md:col-span-2`}/>
     <select name="entry_type" required defaultValue={entry?.entry_type ?? "expense"} className={field}><option value="expense">Despesa</option><option value="income">Receita</option><option value="investment_application">Aporte</option><option value="investment_redemption">Resgate</option><option value="investment_yield">Rendimento</option><option value="adjustment">Ajuste</option></select>
-    <input name="competence" type="month" required defaultValue={(entry?.competence ?? currentCompetence()).slice(0, 7)} className={field}/>
+    <input name="competence" type="month" required defaultValue={(entry?.competence ?? defaultCompetence ?? currentCompetence()).slice(0, 7)} className={field}/>
     <input name="expected_amount" required inputMode="decimal" defaultValue={entry?.expected_amount} placeholder="Valor previsto" className={field}/><input name="actual_amount" inputMode="decimal" defaultValue={entry?.actual_amount ?? ""} placeholder="Valor realizado" className={field}/>
     <input name="expected_date" type="date" defaultValue={entry?.expected_date ?? ""} className={field}/><input name="due_date" type="date" defaultValue={entry?.due_date ?? ""} className={field}/><input name="effective_date" type="date" defaultValue={entry?.effective_date ?? ""} className={field}/>
     <select name="status" defaultValue={entry?.status ?? "planned"} className={field}><option value="planned">Planejado</option><option value="payable">A pagar</option><option value="receivable">A receber</option><option value="paid">Pago</option><option value="received">Recebido</option><option value="pending_confirmation">A confirmar</option><option value="overdue">Vencido</option></select>

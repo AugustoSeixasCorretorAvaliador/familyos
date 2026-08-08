@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effectiveCashflowEntries, isCardCategoryName, monthlyEntryAmount, placeCardCategoriesLast, settledEntriesTotal, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import { cashflowEntriesForBalance, effectiveCashflowEntries, isCardCategoryName, monthlyEntryAmount, placeCardCategoriesLast, settledEntriesTotal, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { FinancialEntryRow } from "@/lib/finance/types";
 
 function entry(overrides: Partial<FinancialEntryRow> = {}) {
@@ -37,6 +37,18 @@ describe("resumo financeiro mensal", () => {
       entry({ id: "cancelled", status: "cancelled" }),
       entry({ id: "archived", deleted_at: "2026-08-07T00:00:00Z" }),
     ]).map((item) => item.id)).toEqual(["active"]);
+  });
+
+  it("inicia o saldo no marco configurado e o transporta para os meses seguintes", () => {
+    const rows = [
+      entry({ id: "before-start", competence: "2026-06-01", actual_amount: 500 }),
+      entry({ id: "august", competence: "2026-08-01", actual_amount: 200 }),
+      entry({ id: "september", competence: "2026-09-01", actual_amount: 100 }),
+      entry({ id: "future", competence: "2026-10-01", actual_amount: 50 }),
+    ];
+
+    expect(cashflowEntriesForBalance(rows, "2026-08-01", "2026-08-01").map((item) => item.id)).toEqual(["august"]);
+    expect(cashflowEntriesForBalance(rows, "2026-09-01", "2026-08-01").map((item) => item.id)).toEqual(["august", "september"]);
   });
 
   it("soma somente lançamentos marcados como recebidos ou pagos", () => {

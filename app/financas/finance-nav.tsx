@@ -10,9 +10,9 @@ const items: Array<{ view: FinanceView | "import"; label: string; href?: string 
   { view: "import", label: "Importar", href: "/financas/importar" },
 ];
 
-export function FinanceNav({ current }: { current: FinanceView | "import" }) {
+export function FinanceNav({ current, competence }: { current: FinanceView | "import"; competence?: string }) {
   return <nav aria-label="Navegação financeira" className="flex gap-2 overflow-x-auto pb-2">
-    {items.map((item) => <Link key={item.view} href={item.href ?? `/financas?view=${item.view}`} aria-current={current === item.view ? "page" : undefined}
+    {items.map((item) => <Link key={item.view} href={item.href ?? `/financas?view=${item.view}${competence ? `&competence=${competence.slice(0, 7)}` : ""}`} aria-current={current === item.view ? "page" : undefined}
       className={`shrink-0 rounded-full px-3 py-2 text-sm font-medium transition ${current === item.view ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
       {item.label}
     </Link>)}
