@@ -26,7 +26,7 @@ function validView(value?: string): FinanceView {
 }
 
 function validMonthlyOrder(value?: string): "alpha" | "category" {
-  return value === "category" ? "category" : "alpha";
+  return value === "alpha" ? "alpha" : "category";
 }
 
 export default async function FinancasPage({ searchParams }: PageProps) {

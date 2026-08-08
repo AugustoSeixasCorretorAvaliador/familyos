@@ -12,6 +12,15 @@ export function sortEntriesAlphabetically(entries: FinancialEntryRow[]) {
   return [...entries].sort((left, right) => left.description.localeCompare(right.description, "pt-BR", { sensitivity: "base" }));
 }
 
+export function isCardCategoryName(name: string) {
+  const normalized = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
+  return normalized.includes("cartao") || normalized.includes("cartoes");
+}
+
+export function placeCardCategoriesLast<T>(items: T[], categoryName: (item: T) => string) {
+  return [...items].sort((left, right) => Number(isCardCategoryName(categoryName(left))) - Number(isCardCategoryName(categoryName(right))));
+}
+
 function isConsolidatedCardBalance(entry: FinancialEntryRow) {
   return Boolean(entry.source_key?.startsWith("card-balance:"));
 }

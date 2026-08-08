@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createMonthlyProjection, toggleEntrySettlement } from "@/app/financas/actions";
 import { buildTimeline, calculateDashboard, cashflowEntriesForMonth, monthlyEntryAmount } from "@/lib/finance/services";
-import { settledEntriesTotal, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import { isCardCategoryName, placeCardCategoriesLast, settledEntriesTotal, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { FinanceWorkspace, FinancialEntryRow } from "@/lib/finance/types";
 import { ArchiveForm, currency, Empty, field, monthLabel, Options, panel, SaveButton } from "@/app/financas/views/shared";
 
@@ -13,6 +13,9 @@ function MonthlyProjectionForm({ workspace, competence, entryType }: { workspace
   const categories = workspace.categories
     .filter((category) => category.category_type === entryType)
     .map((category) => ({ id: category.id, label: category.name }));
+  const defaultResponsiblePersonId = workspace.people.find((person) =>
+    `${person.first_name} ${person.last_name}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLocaleLowerCase("pt-BR") === "augusto seixas"
+  )?.id ?? "";
 
   return <form action={createMonthlyProjection} className="grid gap-3 sm:grid-cols-2">
     <input type="hidden" name="entry_type" value={entryType}/>
@@ -24,6 +27,7 @@ function MonthlyProjectionForm({ workspace, competence, entryType }: { workspace
     <select name="classification_category_id" className={field} aria-label="Tipo"><Options placeholder="Tipo (opcional)" rows={categories}/></select>
     <select name="account_id" className={field}><Options placeholder="Conta (opcional)" rows={workspace.accounts.map((account) => ({ id: account.id, label: account.institution }))}/></select>
     <select name="property_id" className={field}><Options placeholder={isIncome ? "Imóvel do aluguel (opcional)" : "Imóvel relacionado (opcional)"} rows={workspace.properties.map((property) => ({ id: property.id, label: property.title }))}/></select>
+    <select name="responsible_person_id" defaultValue={defaultResponsiblePersonId} className={field} aria-label="Pessoa relacionada"><Options placeholder="Pessoa relacionada (opcional)" rows={workspace.people.map((person) => ({ id: person.id, label: `${person.first_name} ${person.last_name}` }))}/></select>
     <p className="text-xs text-slate-500 sm:col-span-2">O valor entra em {monthLabel(competence)} e é provisionado automaticamente nos 12 meses seguintes. Os meses futuros podem ser ajustados depois.</p>
     <div className="sm:col-span-2"><SaveButton label={isIncome ? "Adicionar receita mensal" : "Adicionar despesa mensal"}/></div>
   </form>;
@@ -33,14 +37,16 @@ function MonthlyEntryList({ title, entries, workspace, competence, kind, orderMo
   const categoryName = (entry: FinancialEntryRow) => workspace.categories.find((item) => item.id === entry.category_id)?.name ?? "Sem categoria";
   const classificationName = (entry: FinancialEntryRow) => workspace.categories.find((item) => item.id === entry.classification_category_id)?.name;
   const alphabetical = sortEntriesAlphabetically(entries);
+  const orderedEntries = kind === "expense" ? placeCardCategoriesLast(alphabetical, categoryName) : alphabetical;
   const categoryGroups = new Map<string, FinancialEntryRow[]>();
-  for (const entry of alphabetical) {
+  for (const entry of orderedEntries) {
     const name = categoryName(entry);
     categoryGroups.set(name, [...(categoryGroups.get(name) ?? []), entry]);
   }
+  const alphabeticGroups = Array.from(categoryGroups).sort(([left], [right]) => left.localeCompare(right, "pt-BR", { sensitivity: "base" }));
   const groups = orderMode === "category"
-    ? Array.from(categoryGroups).sort(([left], [right]) => left.localeCompare(right, "pt-BR", { sensitivity: "base" }))
-    : [["", alphabetical] as [string, FinancialEntryRow[]]];
+    ? kind === "expense" ? placeCardCategoriesLast(alphabeticGroups, ([name]) => name) : alphabeticGroups
+    : [["", orderedEntries] as [string, FinancialEntryRow[]]];
   const orderHref = (mode: MonthlyOrder) => {
     const params = new URLSearchParams({ view: "overview", competence: competence.slice(0, 7), income_order: incomeOrder, expense_order: expenseOrder });
     params.set(kind === "income" ? "income_order" : "expense_order", mode);
@@ -51,14 +57,35 @@ function MonthlyEntryList({ title, entries, workspace, competence, kind, orderMo
   return <section className={panel}>
     <div className="flex items-center justify-between gap-3"><h2 className="font-semibold text-slate-900">{title}</h2><span className="text-sm font-semibold text-slate-700">{currency.format(entries.reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0))}</span></div>
     <div className="mt-3 flex flex-wrap items-center gap-2 text-xs"><span className="font-medium text-slate-500">Ordenar:</span><Link href={orderHref("alpha")} className={`rounded-full border px-3 py-1.5 font-semibold ${orderMode === "alpha" ? "border-sky-600 bg-sky-50 text-sky-700" : "border-slate-200 text-slate-600"}`}>Alfabético</Link><Link href={orderHref("category")} className={`rounded-full border px-3 py-1.5 font-semibold ${orderMode === "category" ? "border-sky-600 bg-sky-50 text-sky-700" : "border-slate-200 text-slate-600"}`}>Por categoria</Link></div>
-    {entries.length ? <div className="mt-4 space-y-4">{groups.map(([groupName, groupEntries]) => <div key={groupName || "all"}>{groupName && <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2"><h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">{groupName}</h3><span className="text-xs font-semibold text-slate-500">{currency.format(groupEntries.reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0))}</span></div>}<div className="divide-y divide-slate-100">{groupEntries.map((entry) => {
+    {entries.length ? <div className="mt-4 space-y-4">{groups.map(([groupName, groupEntries]) => {
+      const groupTotal = currency.format(groupEntries.reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0));
+      const entryRows = <div className="divide-y divide-slate-100">{groupEntries.map((entry) => {
       const isSettled = entry.actual_amount !== null;
       const editParams = new URLSearchParams({ view: "movements", competence: entry.competence.slice(0, 7), q: entry.description, return_view: "overview", return_competence: competence.slice(0, 7), income_order: incomeOrder, expense_order: expenseOrder });
       return <article key={entry.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0"><p className="truncate font-medium text-slate-900">{entry.description}</p><p className="text-xs text-slate-500">{categoryName(entry)}{classificationName(entry) ? ` · Tipo: ${classificationName(entry)}` : ""} · {isSettled ? "realizado" : "provisionado"}{entry.source_key?.startsWith("card-balance:") ? " · cartão consolidado" : ""}</p></div>
         <div className="flex shrink-0 flex-wrap items-center gap-3">{canEdit && <form action={toggleEntrySettlement}><input type="hidden" name="id" value={entry.id}/><input type="hidden" name="settled" value={String(!isSettled)}/><input type="hidden" name="competence" value={competence.slice(0, 7)}/><input type="hidden" name="income_order" value={incomeOrder}/><input type="hidden" name="expense_order" value={expenseOrder}/><button type="submit" aria-pressed={isSettled} title={`${settledLabel}: ${isSettled ? "ON" : "OFF"}`} className={`rounded-full px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition ${isSettled ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}`}>{settledLabel} · {isSettled ? "ON" : "OFF"}</button></form>}<span className="font-semibold tabular-nums">{currency.format(monthlyEntryAmount(entry))}</span><Link href={`/financas?${editParams.toString()}`} className="text-xs font-semibold text-sky-700 underline">Editar</Link>{canAdmin && <ArchiveForm id={entry.id} entity="entry" label="Arquivar"/>}</div>
       </article>;
-    })}</div></div>)}</div> : <Empty>Nenhum valor cadastrado neste mês.</Empty>}
+      })}</div>;
+
+      if (kind === "expense" && orderMode === "category" && groupName) {
+        return <details key={groupName} open={!isCardCategoryName(groupName)} className="group overflow-hidden rounded-xl border border-slate-100">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 bg-slate-50 px-3 py-2">
+            <h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">{groupName}</h3>
+            <span className="flex shrink-0 items-center gap-3">
+              <span className="text-xs font-semibold text-slate-500">{groupTotal}</span>
+              <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-full bg-white text-sm font-bold text-sky-700 shadow-sm">
+                <span className="group-open:hidden">+</span>
+                <span className="hidden group-open:inline">V</span>
+              </span>
+            </span>
+          </summary>
+          <div className="px-3">{entryRows}</div>
+        </details>;
+      }
+
+      return <div key={groupName || "all"}>{groupName && <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2"><h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">{groupName}</h3><span className="text-xs font-semibold text-slate-500">{groupTotal}</span></div>}{entryRows}</div>;
+    })}</div> : <Empty>Nenhum valor cadastrado neste mês.</Empty>}
     <div className={`mt-5 rounded-2xl border p-4 ${kind === "income" ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}><p className={`text-xs font-bold uppercase tracking-wider ${kind === "income" ? "text-emerald-700" : "text-amber-700"}`}>{totalTitle}</p><div className="mt-2 flex items-end justify-between gap-3"><span className="text-xs font-semibold text-slate-600">TOTAL {settledLabel}</span><strong className="text-xl tabular-nums text-slate-900">{currency.format(settledEntriesTotal(entries))}</strong></div></div>
   </section>;
 }
