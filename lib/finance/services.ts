@@ -212,21 +212,26 @@ export async function ensureFinanceRecurrences(familyId: string, userId: string,
     throwIfError(error, "materialize_recurrences");
   }
 
-  const updates = await Promise.all(valid.map((recurrence) => {
+  const recurrenceUpdates = valid.flatMap((recurrence) => {
     const materializedThrough = latestCompetence.get(recurrence.id) && latestCompetence.get(recurrence.id)! > throughCompetence
       ? latestCompetence.get(recurrence.id)!
       : throughCompetence;
     const nextCompetence = addCompetenceMonths(materializedThrough, 1);
-    return db.from("recurrences").update({
-      next_occurrence: monthlyOccurrenceDates({
+    const nextOccurrence = monthlyOccurrenceDates({
       startDate: recurrence.start_date,
       endDate: recurrence.end_date,
       intervalMonths: recurrence.interval_value,
       dayOfMonth: recurrence.day_of_month,
-      }, nextCompetence).find((date) => date.slice(0, 7) > materializedThrough.slice(0, 7)) ?? null,
+    }, nextCompetence).find((date) => date.slice(0, 7) > materializedThrough.slice(0, 7)) ?? null;
+    return recurrence.next_occurrence === nextOccurrence ? [] : [{ id: recurrence.id, nextOccurrence }];
+  });
+
+  const updates = await Promise.all(recurrenceUpdates.map(({ id, nextOccurrence }) =>
+    db.from("recurrences").update({
+      next_occurrence: nextOccurrence,
       updated_by: userId,
-    }).eq("id", recurrence.id).eq("family_id", familyId).is("deleted_at", null);
-  }));
+    }).eq("id", id).eq("family_id", familyId).is("deleted_at", null)
+  ));
   updates.forEach((result) => throwIfError(result.error, "advance_recurrence"));
 }
 

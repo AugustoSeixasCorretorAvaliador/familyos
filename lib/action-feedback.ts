@@ -11,6 +11,7 @@ export type ActionErrorCode =
   | "schema_mismatch"
   | "duplicate"
   | "related_records"
+  | "installment_locked"
   | "not_found"
   | "file_not_found"
   | "signed_url_failed"
@@ -41,6 +42,7 @@ const ERROR_MESSAGES: Record<ActionErrorCode, string> = {
   schema_mismatch: "A estrutura do modulo esta divergente do banco de dados.",
   duplicate: "Este registro ja existe.",
   related_records: "O registro possui dados relacionados e nao pode ser excluido.",
+  installment_locked: "Este parcelamento possui parcela realizada, faturada ou ja foi cancelado e nao pode ser editado.",
   not_found: "O registro nao foi encontrado ou nao esta acessivel.",
   file_not_found: "O arquivo solicitado nao foi encontrado.",
   signed_url_failed: "Nao foi possivel gerar o acesso privado ao arquivo.",

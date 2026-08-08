@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { randomUUID } from "node:crypto";
 import { reportActionError } from "@/lib/action-error";
 import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
 import { generateMonthlyOccurrences, splitInstallments } from "@/lib/finance/domain";
@@ -499,9 +500,93 @@ export async function createInstallmentPurchase(formData: FormData) {
     const db = createClient(); const { data: purchase, error } = await db.from("installment_purchases").insert({ family_id: context.family.id, created_by: context.user.id, description, total_amount: total, installment_count: count, first_competence: first, purchase_date: dateValue(formData.get("purchase_date")), card_id: optionalId(formData, "card_id"), category_id: optionalId(formData, "category_id"), responsible_person_id: optionalId(formData, "responsible_person_id") }).select("id").single(); if (error) throw error;
     const cents = splitInstallments(Math.round(total * 100), count); const start = new Date(`${first}T00:00:00Z`);
     const rows: FinancialEntryInsert[] = cents.map((value, index) => { const date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + index, 1)).toISOString().slice(0, 10); return { family_id: context.family.id, created_by: context.user.id, description: `${description} (${index + 1}/${count})`, competence: date, entry_type: "expense", cash_direction: "none", expected_amount: value / 100, status: "planned", origin: "installment", purchase_kind: "installment", installment_purchase_id: purchase.id, installment_number: index + 1, installment_count: count, card_id: optionalId(formData, "card_id"), category_id: optionalId(formData, "category_id"), source_key: `installment:${purchase.id}:${index + 1}` }; });
-    const { error: entriesError } = await db.from("financial_entries").insert(rows); if (entriesError) throw entriesError;
+    const { error: entriesError } = await db.from("financial_entries").insert(rows);
+    if (entriesError) {
+      await db.from("installment_purchases").update({ deleted_at: new Date().toISOString(), status: "cancelled", updated_by: context.user.id }).eq("id", purchase.id).eq("family_id", context.family.id);
+      throw entriesError;
+    }
   } catch (error) { actionFailure(error, context, "create_installment", "installments"); }
   feedback("installments", "created");
+}
+
+export async function updateInstallmentPurchase(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData);
+    const id = textValue(formData.get("id"), true)!;
+    const total = moneyValue(formData.get("total_amount"), true)!;
+    const count = integerValue(formData.get("installment_count"), { min: 1, max: 360, required: true })!;
+    const first = competenceValue(formData.get("first_competence"));
+    const description = textValue(formData.get("description"), true)!;
+    const purchaseDate = dateValue(formData.get("purchase_date"));
+    const cardId = optionalId(formData, "card_id");
+    const categoryId = optionalId(formData, "category_id");
+    const responsiblePersonId = optionalId(formData, "responsible_person_id");
+    const db = createClient();
+    const { data: purchase, error: purchaseReadError } = await db.from("installment_purchases")
+      .select("id,status").eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+    if (purchaseReadError || !purchase) throw purchaseReadError ?? new FinanceValidationError("not_found");
+    if (purchase.status !== "active") throw new FinanceValidationError("installment_locked");
+
+    const { data: existing, error: entriesReadError } = await db.from("financial_entries")
+      .select("id,installment_number,actual_amount,card_invoice_id,status")
+      .eq("family_id", context.family.id).eq("installment_purchase_id", id).is("deleted_at", null)
+      .order("installment_number", { ascending: true });
+    if (entriesReadError) throw entriesReadError;
+    if ((existing ?? []).some((entry) => entry.actual_amount !== null || entry.card_invoice_id !== null || ["paid", "received", "reversed"].includes(entry.status))) {
+      throw new FinanceValidationError("installment_locked");
+    }
+
+    const cents = splitInstallments(Math.round(total * 100), count);
+    const start = new Date(`${first}T00:00:00Z`);
+    const rows: FinancialEntryInsert[] = cents.map((value, index) => {
+      const date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + index, 1)).toISOString().slice(0, 10);
+      return {
+        id: existing?.[index]?.id ?? randomUUID(), family_id: context.family.id, created_by: context.user.id, updated_by: context.user.id,
+        description: `${description} (${index + 1}/${count})`, competence: date, entry_type: "expense", cash_direction: "none",
+        expected_amount: value / 100, actual_amount: null, status: "planned", origin: "installment", purchase_kind: "installment",
+        installment_purchase_id: id, installment_number: index + 1, installment_count: count,
+        card_id: cardId, category_id: categoryId, responsible_person_id: responsiblePersonId,
+        source_key: `installment:${id}:${index + 1}`,
+      };
+    });
+    const { error: upsertError } = await db.from("financial_entries").upsert(rows, { onConflict: "id" });
+    if (upsertError) throw upsertError;
+
+    const excessIds = (existing ?? []).slice(count).map((entry) => entry.id);
+    if (excessIds.length) {
+      const { error: archiveError } = await db.from("financial_entries").update({ deleted_at: new Date().toISOString(), updated_by: context.user.id })
+        .eq("family_id", context.family.id).in("id", excessIds);
+      if (archiveError) throw archiveError;
+    }
+
+    const { data: updated, error: updateError } = await db.from("installment_purchases").update({
+      description, total_amount: total, installment_count: count, first_competence: first, purchase_date: purchaseDate,
+      card_id: cardId, category_id: categoryId, responsible_person_id: responsiblePersonId, updated_by: context.user.id,
+    }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    if (updateError || !updated) throw updateError ?? new FinanceValidationError("not_found");
+  } catch (error) { actionFailure(error, context, "update_installment", "installments"); }
+  feedback("installments", "updated");
+}
+
+export async function archiveInstallmentPurchase(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData);
+    const id = textValue(formData.get("id"), true)!;
+    const now = new Date().toISOString();
+    const db = createClient();
+    const { data: purchase, error: readError } = await db.from("installment_purchases")
+      .select("id").eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+    if (readError || !purchase) throw readError ?? new FinanceValidationError("not_found");
+    const { error: entriesError } = await db.from("financial_entries").update({ deleted_at: now, updated_by: context.user.id })
+      .eq("family_id", context.family.id).eq("installment_purchase_id", id).is("deleted_at", null);
+    if (entriesError) throw entriesError;
+    const { error: purchaseError } = await db.from("installment_purchases").update({ deleted_at: now, status: "cancelled", updated_by: context.user.id })
+      .eq("id", id).eq("family_id", context.family.id).is("deleted_at", null);
+    if (purchaseError) throw purchaseError;
+  } catch (error) { actionFailure(error, context, "archive_installment", "installments"); }
+  feedback("installments", "archived");
 }
 
 export async function cancelFutureInstallments(formData: FormData) {
