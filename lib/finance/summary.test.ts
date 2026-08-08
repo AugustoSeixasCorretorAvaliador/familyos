@@ -23,12 +23,21 @@ describe("resumo financeiro mensal", () => {
     expect(monthlyEntryAmount(entry({ expected_amount: 100, actual_amount: 87.5 }))).toBe(87.5);
   });
 
+  it("deduz estornos dos totais previstos e realizados", () => {
+    const reversal = entry({ entry_type: "reversal", expected_amount: 98, actual_amount: null });
+    const settledReversal = entry({ entry_type: "reversal", expected_amount: 98, actual_amount: 98 });
+
+    expect(monthlyEntryAmount(reversal)).toBe(-98);
+    expect(settledEntriesTotal([entry({ actual_amount: 200 }), settledReversal])).toBe(102);
+  });
+
   it("não duplica despesas detalhadas quando existe saldo consolidado do cartão", () => {
     const detailed = entry({ id: "detail", card_id: "card-1", expected_amount: 40 });
+    const reversal = entry({ id: "reversal", card_id: "card-1", entry_type: "reversal", expected_amount: 10 });
     const consolidated = entry({ id: "balance", card_id: "card-1", expected_amount: 500, source_key: "card-balance:card-1:2026-08-01" });
     const otherMonth = entry({ id: "september", competence: "2026-09-01", card_id: "card-1", expected_amount: 60 });
 
-    expect(effectiveCashflowEntries([detailed, consolidated, otherMonth]).map((item) => item.id)).toEqual(["balance", "september"]);
+    expect(effectiveCashflowEntries([detailed, reversal, consolidated, otherMonth]).map((item) => item.id)).toEqual(["balance", "september"]);
   });
 
   it("ignora registros arquivados e cancelados", () => {

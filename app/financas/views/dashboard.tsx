@@ -94,7 +94,7 @@ export function DashboardView({ workspace, competence, incomeOrder, expenseOrder
   const metrics = calculateDashboard(workspace, competence);
   const monthEntries = cashflowEntriesForMonth(workspace.entries, competence);
   const incomeEntries = monthEntries.filter((entry) => ["income", "investment_yield"].includes(entry.entry_type));
-  const expenseEntries = monthEntries.filter((entry) => entry.entry_type === "expense");
+  const expenseEntries = monthEntries.filter((entry) => ["expense", "reversal"].includes(entry.entry_type));
   const primaryItems = [
     ["Receitas do mês", metrics.monthlyIncome, "emerald"],
     ["Despesas do mês", metrics.monthlyExpense, "amber"],

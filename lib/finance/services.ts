@@ -142,9 +142,10 @@ export async function ensureFinanceRecurrences(familyId: string, userId: string,
     .select("recurrence_id,competence")
     .eq("family_id", familyId)
     .in("recurrence_id", recurrenceIds)
-    .gte("competence", `${earliestStart.slice(0, 7)}-01`)
-    .is("deleted_at", null);
+    .gte("competence", `${earliestStart.slice(0, 7)}-01`);
   throwIfError(existingError, "ensure_recurrence_entries");
+  // Ocorrências arquivadas também ocupam a competência: recriá-las desfaria
+  // silenciosamente uma decisão explícita do usuário.
   const existingMonths = new Set((existing ?? []).map((entry) => `${entry.recurrence_id}:${entry.competence}`));
   const latestCompetence = new Map<string, string>();
   for (const entry of existing ?? []) {
@@ -238,7 +239,9 @@ export function calculateDashboard(workspace: FinanceWorkspace, competence: stri
     .sort()[0] ?? null;
   const balanceEntries = cashflowEntriesForBalance(workspace.entries, competence, openingBalanceDate);
   const isIncome = (entry: FinancialEntryRow) => ["income", "investment_yield"].includes(entry.entry_type);
-  const isExpense = (entry: FinancialEntryRow) => entry.entry_type === "expense";
+  const isExpense = (entry: FinancialEntryRow) => ["expense", "reversal"].includes(entry.entry_type);
+  const expectedExpenseAmount = (entry: FinancialEntryRow) => entry.entry_type === "reversal" ? -entry.expected_amount : entry.expected_amount;
+  const actualExpenseAmount = (entry: FinancialEntryRow) => entry.entry_type === "reversal" ? -(entry.actual_amount ?? 0) : (entry.actual_amount ?? 0);
   const cashIn = balanceEntries.filter((entry) => entry.cash_direction === "inflow").reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
   const cashOut = balanceEntries.filter((entry) => entry.cash_direction === "outflow").reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
   const opening = workspace.accounts
@@ -246,8 +249,8 @@ export function calculateDashboard(workspace: FinanceWorkspace, competence: stri
     .reduce((sum, account) => sum + account.opening_balance, 0);
   const expectedIncome = month.filter(isIncome).reduce((sum, entry) => sum + entry.expected_amount, 0);
   const actualIncome = month.filter(isIncome).reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
-  const expectedExpense = month.filter(isExpense).reduce((sum, entry) => sum + entry.expected_amount, 0);
-  const actualExpense = month.filter(isExpense).reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
+  const expectedExpense = month.filter(isExpense).reduce((sum, entry) => sum + expectedExpenseAmount(entry), 0);
+  const actualExpense = month.filter(isExpense).reduce((sum, entry) => sum + actualExpenseAmount(entry), 0);
   const monthlyIncome = month.filter(isIncome).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
   const monthlyExpense = month.filter(isExpense).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
   const available = opening + cashIn - cashOut;
@@ -265,8 +268,8 @@ export function calculateDashboard(workspace: FinanceWorkspace, competence: stri
     overdue: activeEntries.filter((entry) => entry.due_date && entry.due_date < today && entry.actual_amount === null).length,
     invoices: workspace.invoices.filter((invoice) => invoice.competence === competence && !["paid", "cancelled"].includes(invoice.status)).reduce((sum, invoice) => sum + (invoice.closed_amount ?? invoice.expected_amount), 0),
     cardLimit: workspace.cards.reduce((sum, card) => sum + (card.credit_limit ?? 0), 0),
-    cardUsed: month.filter((entry) => entry.card_id && isExpense(entry)).reduce((sum, entry) => sum + entry.expected_amount, 0),
-    futureCommitments: activeEntries.filter((entry) => entry.competence > competence && isExpense(entry)).reduce((sum, entry) => sum + entry.expected_amount, 0),
+    cardUsed: month.filter((entry) => entry.card_id && isExpense(entry)).reduce((sum, entry) => sum + expectedExpenseAmount(entry), 0),
+    futureCommitments: activeEntries.filter((entry) => entry.competence > competence && isExpense(entry)).reduce((sum, entry) => sum + expectedExpenseAmount(entry), 0),
     investments: Array.from(activePositions.values()).reduce((sum, value) => sum + value, 0),
     rentalIncome, propertyExpenses, propertyNet: rentalIncome - propertyExpenses,
   };
@@ -289,7 +292,7 @@ export async function getConsolidatedFinancialSummary(familyId: string, competen
     .filter((entry) => ["income", "investment_yield"].includes(entry.entry_type))
     .reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
   const expense = month
-    .filter((entry) => entry.entry_type === "expense")
+    .filter((entry) => ["expense", "reversal"].includes(entry.entry_type))
     .reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
   const activeAssetIds = new Set((assetsResult.data ?? []).map((asset) => asset.id));
   const latestPositions = new Map<string, { value: number; date: string }>();
@@ -325,7 +328,7 @@ export function buildTimeline(entries: FinancialEntryRow[], centerCompetence: st
     const competence = date.toISOString().slice(0, 10);
     const selected = activeEntries.filter((entry) => entry.competence === competence);
     const income = selected.filter((entry) => ["income", "investment_yield"].includes(entry.entry_type)).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
-    const expense = selected.filter((entry) => entry.entry_type === "expense").reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
+    const expense = selected.filter((entry) => ["expense", "reversal"].includes(entry.entry_type)).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
     return { competence, income, expense, result: income - expense };
   });
 }

@@ -1,11 +1,15 @@
 import type { FinancialEntryRow } from "@/lib/finance/types";
 
 export function monthlyEntryAmount(entry: FinancialEntryRow) {
-  return entry.actual_amount ?? entry.expected_amount;
+  const amount = entry.actual_amount ?? entry.expected_amount;
+  return entry.entry_type === "reversal" ? -amount : amount;
 }
 
 export function settledEntriesTotal(entries: FinancialEntryRow[]) {
-  return entries.reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
+  return entries.reduce((sum, entry) => {
+    const amount = entry.actual_amount ?? 0;
+    return sum + (entry.entry_type === "reversal" ? -amount : amount);
+  }, 0);
 }
 
 export function sortEntriesAlphabetically(entries: FinancialEntryRow[]) {
@@ -34,7 +38,7 @@ export function effectiveCashflowEntries(entries: FinancialEntryRow[]) {
   );
 
   return activeEntries.filter((entry) => {
-    if (!entry.card_id || entry.entry_type !== "expense" || isConsolidatedCardBalance(entry)) return true;
+    if (!entry.card_id || !["expense", "reversal"].includes(entry.entry_type) || isConsolidatedCardBalance(entry)) return true;
     return !consolidatedCards.has(`${entry.competence}:${entry.card_id}`);
   });
 }
