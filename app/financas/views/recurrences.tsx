@@ -37,7 +37,7 @@ export function RecurrencesView({ workspace, competence, canEdit }: { workspace:
           <span className={`w-fit rounded-full px-2 py-1 text-xs ${item.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{item.active ? "Ativa" : item.end_date ? "Encerrada" : "Pausada"}</span>
         </div>
         {canEdit && <div className="mt-4 flex flex-wrap gap-2">
-          <form action={toggleRecurrence}><input type="hidden" name="id" value={item.id}/><input type="hidden" name="active" value={String(!item.active)}/><SaveButton label={item.active ? "Pausar" : "Reativar"}/></form>
+          <form action={toggleRecurrence}><input type="hidden" name="id" value={item.id}/><input type="hidden" name="active" value={String(!item.active)}/>{!item.active && <input type="hidden" name="from_competence" value={competence.slice(0, 7)}/>}<SaveButton label={item.active ? "Pausar" : "Reativar"}/></form>
           {item.active && <form action={generateRecurrenceOccurrences} className="flex gap-2"><input type="hidden" name="id" value={item.id}/><input name="count" type="number" min="1" max="24" defaultValue="3" aria-label="Quantidade de ocorrências" className={`${field} w-24`}/><SaveButton label="Gerar"/></form>}
           {item.active && <form action={endRecurrence} className="flex flex-wrap items-center gap-2">
             <input type="hidden" name="id" value={item.id}/>

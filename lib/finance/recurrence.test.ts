@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCompetenceMonths, dayBeforeCompetence, monthlyOccurrenceDates, recurrenceOccurrenceId, sortRecurrencesForEditing } from "@/lib/finance/recurrence";
+import { addCompetenceMonths, dayBeforeCompetence, monthlyOccurrenceDates, recurrenceActivationPatch, recurrenceOccurrenceId, sortRecurrencesForEditing } from "@/lib/finance/recurrence";
 import type { Recurrence } from "@/lib/finance/types";
 
 describe("recorrências financeiras contínuas", () => {
@@ -56,5 +56,14 @@ describe("recorrências financeiras contínuas", () => {
       "inactive-income-z",
       "inactive-expense",
     ]);
+  });
+
+  it("limpa encerramento e reinicia o horizonte ao reativar", () => {
+    expect(recurrenceActivationPatch(true, "2026-08-10")).toEqual({
+      active: true,
+      end_date: null,
+      next_occurrence: "2026-08-10",
+    });
+    expect(recurrenceActivationPatch(false, "2026-08-10")).toEqual({ active: false });
   });
 });

@@ -8,7 +8,7 @@ import { reportActionError } from "@/lib/action-error";
 import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
 import { findCardCategoryId } from "@/lib/finance/card-category";
 import { generateMonthlyOccurrences, splitInstallments } from "@/lib/finance/domain";
-import { dayBeforeCompetence } from "@/lib/finance/recurrence";
+import { dayBeforeCompetence, recurrenceActivationPatch } from "@/lib/finance/recurrence";
 import { assertNoClientFamilyId, CATEGORY_TYPES, competenceValue, dateValue, ENTRY_STATUSES, ENTRY_TYPES, FinanceValidationError, integerValue, moneyValue, oneOf, optionalId, textValue, validatePercentage } from "@/lib/finance/validation";
 import { createClient } from "@/lib/supabase/server";
 import type { FinancialEntryInsert } from "@/lib/finance/types";
@@ -509,7 +509,56 @@ export async function createRecurrence(formData: FormData) {
 
 export async function toggleRecurrence(formData: FormData) {
   const context = await requireEditor();
-  try { assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const active = textValue(formData.get("active"), true) === "true"; const { error } = await createClient().from("recurrences").update({ active, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id); if (error) throw error; }
+  try {
+    assertNoClientFamilyId(formData);
+    const id = textValue(formData.get("id"), true)!;
+    const active = textValue(formData.get("active"), true) === "true";
+    const db = createClient();
+    if (!active) {
+      const { error } = await db.from("recurrences").update({ active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null);
+      if (error) throw error;
+    } else {
+      const fromCompetence = competenceValue(formData.get("from_competence"));
+      const { data: recurrence, error: recurrenceError } = await db.from("recurrences")
+        .select("id,start_date,active,end_date,next_occurrence")
+        .eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+      if (recurrenceError || !recurrence) throw recurrenceError ?? new FinanceValidationError("not_found");
+
+      const { data: activeEntries, error: activeEntriesError } = await db.from("financial_entries")
+        .select("competence")
+        .eq("family_id", context.family.id).eq("recurrence_id", id)
+        .gte("competence", fromCompetence).is("deleted_at", null);
+      if (activeEntriesError) throw activeEntriesError;
+      const activeMonths = new Set((activeEntries ?? []).map((entry) => entry.competence));
+
+      const { data: archivedEntries, error: archivedEntriesError } = await db.from("financial_entries")
+        .select("id,competence")
+        .eq("family_id", context.family.id).eq("recurrence_id", id)
+        .gte("competence", fromCompetence).not("deleted_at", "is", null).is("actual_amount", null);
+      if (archivedEntriesError) throw archivedEntriesError;
+      const restoreIds = (archivedEntries ?? []).filter((entry) => !activeMonths.has(entry.competence)).map((entry) => entry.id);
+
+      const { error: activationError } = await db.from("recurrences")
+        .update({ ...recurrenceActivationPatch(true, recurrence.start_date), updated_by: context.user.id })
+        .eq("id", id).eq("family_id", context.family.id).is("deleted_at", null);
+      if (activationError) throw activationError;
+
+      if (restoreIds.length) {
+        const { error: restoreError } = await db.from("financial_entries")
+          .update({ deleted_at: null, updated_by: context.user.id })
+          .in("id", restoreIds).eq("family_id", context.family.id);
+        if (restoreError) {
+          await db.from("recurrences").update({
+            active: recurrence.active,
+            end_date: recurrence.end_date,
+            next_occurrence: recurrence.next_occurrence,
+            updated_by: context.user.id,
+          }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null);
+          throw restoreError;
+        }
+      }
+    }
+  }
   catch (error) { actionFailure(error, context, "toggle_recurrence", "recurrences"); }
   feedback("recurrences", "updated");
 }

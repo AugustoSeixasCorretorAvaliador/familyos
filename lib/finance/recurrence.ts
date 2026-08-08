@@ -24,6 +24,12 @@ export function sortRecurrencesForEditing(recurrences: Recurrence[]) {
   });
 }
 
+export function recurrenceActivationPatch(active: boolean, startDate: string) {
+  return active
+    ? { active: true, end_date: null, next_occurrence: startDate }
+    : { active: false };
+}
+
 export function recurrenceOccurrenceId(familyId: string, recurrenceId: string, date: string) {
   return deterministicImportUuid(familyId, "recurrence_occurrences", `${recurrenceId}:${date}`);
 }
