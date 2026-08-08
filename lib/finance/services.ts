@@ -5,8 +5,9 @@ export type { FinanceImportCommitResult, FinanceImportPreview, ImportPreviewCoun
 
 import { createClient } from "@/lib/supabase/server";
 import { decodeEntryCursor, encodeEntryCursor } from "@/lib/finance/pagination";
+import { addCompetenceMonths, monthlyOccurrenceDates } from "@/lib/finance/recurrence";
 import { cashflowEntriesForBalance, effectiveCashflowEntries, monthlyEntryAmount } from "@/lib/finance/summary";
-import type { DashboardMetrics, FinanceFilters, FinanceWorkspace, FinancialEntryPage, FinancialEntryRow } from "@/lib/finance/types";
+import type { DashboardMetrics, FinanceFilters, FinanceWorkspace, FinancialEntryInsert, FinancialEntryPage, FinancialEntryRow } from "@/lib/finance/types";
 
 export { cashflowEntriesForMonth, monthlyEntryAmount } from "@/lib/finance/summary";
 
@@ -120,6 +121,109 @@ export function filterEntries(entries: FinancialEntryRow[], filters: FinanceFilt
   });
 }
 
+export async function ensureFinanceRecurrences(familyId: string, userId: string, selectedCompetence: string) {
+  const db = createClient();
+  const throughCompetence = addCompetenceMonths(selectedCompetence, 12);
+  const { data: recurrences, error: recurrenceError } = await db.from("recurrences")
+    .select("*")
+    .eq("family_id", familyId)
+    .eq("active", true)
+    .eq("frequency", "monthly")
+    .is("deleted_at", null)
+    .lte("start_date", throughCompetence);
+  throwIfError(recurrenceError, "ensure_recurrences");
+
+  const valid = (recurrences ?? []).filter((rule) => rule.entry_type && rule.expected_amount !== null);
+  if (!valid.length) return;
+
+  const recurrenceIds = valid.map((rule) => rule.id);
+  const earliestStart = valid.map((rule) => rule.start_date).sort()[0];
+  const { data: existing, error: existingError } = await db.from("financial_entries")
+    .select("recurrence_id,competence")
+    .eq("family_id", familyId)
+    .in("recurrence_id", recurrenceIds)
+    .gte("competence", `${earliestStart.slice(0, 7)}-01`)
+    .is("deleted_at", null);
+  throwIfError(existingError, "ensure_recurrence_entries");
+  const existingMonths = new Set((existing ?? []).map((entry) => `${entry.recurrence_id}:${entry.competence}`));
+  const latestCompetence = new Map<string, string>();
+  for (const entry of existing ?? []) {
+    if (entry.recurrence_id && entry.competence > (latestCompetence.get(entry.recurrence_id) ?? "")) {
+      latestCompetence.set(entry.recurrence_id, entry.competence);
+    }
+  }
+
+  const rows: FinancialEntryInsert[] = [];
+  for (const recurrence of valid) {
+    const extras = typeof recurrence.rule === "object" && recurrence.rule && !Array.isArray(recurrence.rule)
+      ? recurrence.rule as Record<string, unknown>
+      : {};
+    const dates = monthlyOccurrenceDates({
+      startDate: recurrence.start_date,
+      endDate: recurrence.end_date,
+      intervalMonths: recurrence.interval_value,
+      dayOfMonth: recurrence.day_of_month,
+    }, throughCompetence);
+
+    for (const date of dates) {
+      const competence = `${date.slice(0, 7)}-01`;
+      if (existingMonths.has(`${recurrence.id}:${competence}`)) continue;
+      const isIncome = ["income", "investment_redemption", "investment_yield"].includes(recurrence.entry_type!);
+      rows.push({
+        family_id: familyId,
+        created_by: userId,
+        description: recurrence.description ?? "Lançamento recorrente",
+        competence,
+        entry_type: recurrence.entry_type!,
+        cash_direction: isIncome ? "inflow" : "outflow",
+        expected_amount: recurrence.expected_amount!,
+        actual_amount: null,
+        expected_date: date,
+        due_date: date,
+        effective_date: null,
+        status: isIncome ? "receivable" : "payable",
+        category_id: recurrence.category_id,
+        classification_category_id: typeof extras.classification_category_id === "string" ? extras.classification_category_id : null,
+        account_id: recurrence.account_id,
+        card_id: recurrence.card_id,
+        responsible_person_id: recurrence.responsible_person_id,
+        property_id: typeof extras.property_id === "string" ? extras.property_id : null,
+        property_unit_id: typeof extras.property_unit_id === "string" ? extras.property_unit_id : null,
+        lease_contract_id: typeof extras.lease_contract_id === "string" ? extras.lease_contract_id : null,
+        investment_asset_id: typeof extras.investment_asset_id === "string" ? extras.investment_asset_id : null,
+        notes: typeof extras.notes === "string" ? extras.notes : null,
+        origin: "recurrence",
+        purchase_kind: "recurring",
+        recurrence_id: recurrence.id,
+        source_key: `recurrence:${recurrence.id}:${date}`,
+        metadata: { recurrence_materialized: true },
+      });
+    }
+  }
+
+  if (rows.length) {
+    const { error } = await db.from("financial_entries").upsert(rows, { onConflict: "family_id,source_key", ignoreDuplicates: true });
+    throwIfError(error, "materialize_recurrences");
+  }
+
+  const updates = await Promise.all(valid.map((recurrence) => {
+    const materializedThrough = latestCompetence.get(recurrence.id) && latestCompetence.get(recurrence.id)! > throughCompetence
+      ? latestCompetence.get(recurrence.id)!
+      : throughCompetence;
+    const nextCompetence = addCompetenceMonths(materializedThrough, 1);
+    return db.from("recurrences").update({
+      next_occurrence: monthlyOccurrenceDates({
+      startDate: recurrence.start_date,
+      endDate: recurrence.end_date,
+      intervalMonths: recurrence.interval_value,
+      dayOfMonth: recurrence.day_of_month,
+      }, nextCompetence).find((date) => date.slice(0, 7) > materializedThrough.slice(0, 7)) ?? null,
+      updated_by: userId,
+    }).eq("id", recurrence.id).eq("family_id", familyId).is("deleted_at", null);
+  }));
+  updates.forEach((result) => throwIfError(result.error, "advance_recurrence"));
+}
+
 export function calculateDashboard(workspace: FinanceWorkspace, competence: string, today = new Date().toISOString().slice(0, 10)): DashboardMetrics {
   const activeEntries = effectiveCashflowEntries(workspace.entries);
   const month = activeEntries.filter((entry) => entry.competence === competence);
@@ -160,6 +264,44 @@ export function calculateDashboard(workspace: FinanceWorkspace, competence: stri
     futureCommitments: activeEntries.filter((entry) => entry.competence > competence && isExpense(entry)).reduce((sum, entry) => sum + entry.expected_amount, 0),
     investments: Array.from(activePositions.values()).reduce((sum, value) => sum + value, 0),
     rentalIncome, propertyExpenses, propertyNet: rentalIncome - propertyExpenses,
+  };
+}
+
+export async function getConsolidatedFinancialSummary(familyId: string, competence: string) {
+  const db = createClient();
+  const [entriesResult, assetsResult, positionsResult] = await Promise.all([
+    db.from("financial_entries").select("*").eq("family_id", familyId).eq("competence", competence).is("deleted_at", null),
+    db.from("investment_assets").select("id").eq("family_id", familyId).eq("active", true).is("deleted_at", null),
+    db.from("investment_positions").select("asset_id,market_value,position_date,created_at").eq("family_id", familyId)
+      .order("position_date", { ascending: false }).order("created_at", { ascending: false }),
+  ]);
+  throwIfError(entriesResult.error, "consolidated_entries");
+  throwIfError(assetsResult.error, "consolidated_assets");
+  throwIfError(positionsResult.error, "consolidated_positions");
+
+  const month = effectiveCashflowEntries(entriesResult.data ?? []);
+  const income = month
+    .filter((entry) => ["income", "investment_yield"].includes(entry.entry_type))
+    .reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
+  const expense = month
+    .filter((entry) => entry.entry_type === "expense")
+    .reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
+  const activeAssetIds = new Set((assetsResult.data ?? []).map((asset) => asset.id));
+  const latestPositions = new Map<string, { value: number; date: string }>();
+  for (const position of positionsResult.data ?? []) {
+    if (activeAssetIds.has(position.asset_id) && !latestPositions.has(position.asset_id)) {
+      latestPositions.set(position.asset_id, { value: position.market_value, date: position.position_date });
+    }
+  }
+  const investments = Array.from(latestPositions.values()).reduce((sum, position) => sum + position.value, 0);
+  const entryUpdates = month.map((entry) => entry.updated_at);
+  const positionUpdates = Array.from(latestPositions.values()).map((position) => position.date);
+
+  return {
+    monthlyResult: income - expense,
+    investments,
+    consolidatedBalance: income - expense + investments,
+    updatedAt: [...entryUpdates, ...positionUpdates].filter(Boolean).sort().at(-1) ?? null,
   };
 }
 

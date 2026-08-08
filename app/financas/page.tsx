@@ -9,7 +9,7 @@ import { MovementsView } from "@/app/financas/views/movements";
 import { RecurrencesView } from "@/app/financas/views/recurrences";
 import { getActionErrorMessage } from "@/lib/action-feedback";
 import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
-import { currentCompetence, getFinanceWorkspace, getFinancialEntryPage } from "@/lib/finance/services";
+import { currentCompetence, ensureFinanceRecurrences, getFinanceWorkspace, getFinancialEntryPage } from "@/lib/finance/services";
 import type { FinanceFilters, FinanceView } from "@/lib/finance/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -50,13 +50,14 @@ export default async function FinancasPage({ searchParams }: PageProps) {
     realization: valueOf(searchParams, "realization") as FinanceFilters["realization"],
     query: valueOf(searchParams, "q"),
   };
+  const canEdit = canEditFamily(context);
+  if (canEdit) await ensureFinanceRecurrences(context.family.id, context.user.id, competence);
   const [workspace, movementPage] = await Promise.all([
     getFinanceWorkspace(context.family.id, view !== "movements"),
     view === "movements"
       ? getFinancialEntryPage(context.family.id, filters, valueOf(searchParams, "cursor"), 25)
       : Promise.resolve({ entries: [], hasMore: false, nextCursor: null }),
   ]);
-  const canEdit = canEditFamily(context);
   const canAdmin = canAdminFamily(context);
   const incomeOrder = validMonthlyOrder(valueOf(searchParams, "income_order"));
   const expenseOrder = validMonthlyOrder(valueOf(searchParams, "expense_order"));

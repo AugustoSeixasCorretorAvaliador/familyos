@@ -13,6 +13,7 @@ import {
   type DocumentExpirationRow,
 } from "@/lib/dashboard/document-alerts";
 import { getFamilyContext } from "@/lib/family/context";
+import { currentCompetence, getConsolidatedFinancialSummary } from "@/lib/finance/services";
 import { createClient } from "@/lib/supabase/server";
 import {
   loadTimelineEntries,
@@ -319,15 +320,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
     const accounts = (accountsData ?? []) as AccountMetricRow[];
     accountsCount = accounts.length;
-    consolidatedBalance = accounts.reduce((sum, account) => {
-      const amount = account.metadata?.saldo_atual;
-      return sum + (typeof amount === "number" ? amount : 0);
-    }, 0);
-    lastBalanceUpdate = accounts
-      .map((account) => account.metadata?.data_atualizacao)
-      .filter((value): value is string => typeof value === "string" && value.length > 0)
-      .sort()
-      .at(-1) ?? null;
+    const financialSummary = await getConsolidatedFinancialSummary(familyId, currentCompetence());
+    consolidatedBalance = financialSummary.consolidatedBalance;
+    lastBalanceUpdate = financialSummary.updatedAt;
 
     doctorsCount = drCount ?? 0;
     medicationsInUse = ((medsData ?? []) as MedicationMetricRow[]).filter(

@@ -179,6 +179,30 @@ export async function createMonthlyProjection(formData: FormData) {
     const monthsAhead = integerValue(formData.get("months_ahead") ?? "12", { min: 0, max: 24, required: true })!;
     const description = textValue(formData.get("description"), true)!;
     const seriesId = crypto.randomUUID();
+    const db = createClient();
+    const categoryId = optionalId(formData, "category_id");
+    const classificationCategoryId = optionalId(formData, "classification_category_id");
+    const accountId = optionalId(formData, "account_id");
+    const propertyId = optionalId(formData, "property_id");
+    const responsiblePersonId = optionalId(formData, "responsible_person_id");
+    const { data: recurrence, error: recurrenceError } = await db.from("recurrences").insert({
+      family_id: context.family.id,
+      created_by: context.user.id,
+      description,
+      entry_type: entryType,
+      expected_amount: expectedAmount,
+      frequency: "monthly",
+      interval_value: 1,
+      day_of_month: 1,
+      start_date: competence,
+      next_occurrence: addCompetenceMonths(competence, monthsAhead + 1),
+      category_id: categoryId,
+      account_id: accountId,
+      responsible_person_id: responsiblePersonId,
+      rule: { projection_series_id: seriesId, classification_category_id: classificationCategoryId, property_id: propertyId },
+      active: true,
+    }).select("id").single();
+    if (recurrenceError) throw recurrenceError;
     const rows: FinancialEntryInsert[] = Array.from({ length: monthsAhead + 1 }, (_, index) => {
       const month = addCompetenceMonths(competence, index);
       return {
@@ -190,18 +214,19 @@ export async function createMonthlyProjection(formData: FormData) {
         cash_direction: entryType === "income" ? "inflow" : "outflow",
         expected_amount: expectedAmount,
         status: entryType === "income" ? "receivable" : "payable",
-        category_id: optionalId(formData, "category_id"),
-        classification_category_id: optionalId(formData, "classification_category_id"),
-        account_id: optionalId(formData, "account_id"),
-        property_id: optionalId(formData, "property_id"),
-        responsible_person_id: optionalId(formData, "responsible_person_id"),
+        category_id: categoryId,
+        classification_category_id: classificationCategoryId,
+        account_id: accountId,
+        property_id: propertyId,
+        responsible_person_id: responsiblePersonId,
         origin: "manual",
         purchase_kind: "recurring",
+        recurrence_id: recurrence.id,
         source_key: `monthly-plan:${seriesId}:${month}`,
         metadata: { projection_series_id: seriesId, projection_source_competence: competence, projected: index > 0 },
       };
     });
-    const { error } = await createClient().from("financial_entries").insert(rows);
+    const { error } = await db.from("financial_entries").insert(rows);
     if (error) throw error;
   } catch (error) { actionFailure(error, context, "create_monthly_projection", "overview", returnValues); }
   feedback("overview", "projection_created", returnValues);
@@ -316,6 +341,15 @@ export async function updateEntry(formData: FormData) {
         .is("actual_amount", null)
         .is("deleted_at", null);
       if (futureError) throw futureError;
+    }
+
+    if (existing.recurrence_id) {
+      const { data: recurrence, error: recurrenceReadError } = await db.from("recurrences").select("rule")
+        .eq("id", existing.recurrence_id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+      if (recurrenceReadError || !recurrence) throw recurrenceReadError ?? new Error("not_found");
+      const recurrenceRule = typeof recurrence.rule === "object" && recurrence.rule && !Array.isArray(recurrence.rule)
+        ? recurrence.rule as Record<string, unknown>
+        : {};
       const { error: recurrenceError } = await db.from("recurrences").update({
         description: payload.description,
         entry_type: payload.entry_type,
@@ -324,6 +358,15 @@ export async function updateEntry(formData: FormData) {
         account_id: payload.account_id,
         card_id: payload.card_id,
         responsible_person_id: payload.responsible_person_id,
+        rule: {
+          ...recurrenceRule,
+          classification_category_id: payload.classification_category_id,
+          property_id: payload.property_id,
+          property_unit_id: payload.property_unit_id,
+          lease_contract_id: payload.lease_contract_id,
+          investment_asset_id: payload.investment_asset_id,
+          notes: payload.notes,
+        },
         updated_by: context.user.id,
       }).eq("id", existing.recurrence_id).eq("family_id", context.family.id).is("deleted_at", null);
       if (recurrenceError) throw recurrenceError;
@@ -586,7 +629,32 @@ export async function archiveFinanceRecord(formData: FormData) {
     if (entity === "account") ({ error } = await db.from("accounts").update({ deleted_at: now, status: "archived", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
     else if (entity === "category") ({ error } = await db.from("financial_categories").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
     else if (entity === "card") ({ error } = await db.from("credit_cards").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
-    else if (entity === "entry") ({ error } = await db.from("financial_entries").update({ deleted_at: now, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
+    else if (entity === "entry") {
+      const { data: entry, error: readError } = await db.from("financial_entries")
+        .select("id,competence,recurrence_id,metadata")
+        .eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+      if (readError || !entry) throw readError ?? new Error("not_found");
+      ({ error } = await db.from("financial_entries").update({ deleted_at: now, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
+      if (error) throw error;
+      const seriesId = typeof entry.metadata === "object" && entry.metadata && !Array.isArray(entry.metadata)
+        ? String(entry.metadata.projection_series_id ?? "")
+        : "";
+      if (seriesId) {
+        ({ error } = await db.from("financial_entries").update({ deleted_at: now, updated_by: context.user.id })
+          .eq("family_id", context.family.id).gt("competence", entry.competence)
+          .contains("metadata", { projection_series_id: seriesId }).is("deleted_at", null));
+      } else if (entry.recurrence_id) {
+        ({ error } = await db.from("financial_entries").update({ deleted_at: now, updated_by: context.user.id })
+          .eq("family_id", context.family.id).eq("recurrence_id", entry.recurrence_id)
+          .gt("competence", entry.competence).is("deleted_at", null));
+      }
+      if (error) throw error;
+      if (entry.recurrence_id) {
+        const end = new Date(`${entry.competence}T00:00:00Z`); end.setUTCDate(end.getUTCDate() - 1);
+        ({ error } = await db.from("recurrences").update({ active: false, end_date: end.toISOString().slice(0, 10), next_occurrence: null, updated_by: context.user.id })
+          .eq("id", entry.recurrence_id).eq("family_id", context.family.id).is("deleted_at", null));
+      }
+    }
     else if (entity === "asset") ({ error } = await db.from("investment_assets").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
     else if (entity === "property") ({ error } = await db.from("properties").update({ deleted_at: now, status: "archived", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
     else throw new FinanceValidationError("invalid_entity"); if (error) throw error;
