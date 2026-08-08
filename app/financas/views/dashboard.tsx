@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createMonthlyProjection, toggleCardSettlement, toggleEntrySettlement } from "@/app/financas/actions";
 import { buildTimeline, calculateDashboard, cashflowEntriesForMonth, monthlyEntryAmount } from "@/lib/finance/services";
-import { isCardCategoryName, pendingEntriesTotal, placeCardCategoriesLast, settledEntriesTotal, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import { isCardCategoryName, pendingEntriesTotal, placeCardCategoriesLast, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { FinanceWorkspace, FinancialEntryRow } from "@/lib/finance/types";
 import { ArchiveForm, currency, Empty, field, monthLabel, Options, panel, SaveButton } from "@/app/financas/views/shared";
 
@@ -64,7 +64,8 @@ function MonthlyEntryList({ title, entries, workspace, competence, kind, orderMo
       const cardId = groupEntries.find((entry) => entry.card_id)?.card_id ?? null;
       const individualCardEntries = cardId ? groupEntries.filter((entry) => entry.card_id === cardId && entry.entry_type === "expense" && !entry.source_key?.startsWith("card-balance:")) : [];
       const cardPaid = individualCardEntries.length > 0 && individualCardEntries.every((entry) => entry.actual_amount !== null);
-      const entryRows = <div className="divide-y divide-slate-100">{groupEntries.map((entry) => {
+      const displayedEntries = kind === "expense" && orderMode === "category" && isCardCategoryName(groupName) ? sortCardEntries(groupEntries) : groupEntries;
+      const entryRows = <div className="divide-y divide-slate-100">{displayedEntries.map((entry) => {
       const isSettled = entry.actual_amount !== null;
       const editParams = new URLSearchParams({ view: "movements", competence: entry.competence.slice(0, 7), q: entry.description, return_view: "overview", return_competence: competence.slice(0, 7), income_order: incomeOrder, expense_order: expenseOrder });
       return <article key={entry.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">

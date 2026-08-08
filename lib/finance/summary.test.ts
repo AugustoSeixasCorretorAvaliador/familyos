@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, isCardCategoryName, monthlyEntryAmount, pendingEntriesTotal, placeCardCategoriesLast, settledEntriesTotal, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import { cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, isCardCategoryName, monthlyEntryAmount, pendingEntriesTotal, placeCardCategoriesLast, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { FinancialEntryRow } from "@/lib/finance/types";
 
 function entry(overrides: Partial<FinancialEntryRow> = {}) {
@@ -92,5 +92,29 @@ describe("resumo financeiro mensal", () => {
   it("mantém categorias de cartões depois das demais despesas", () => {
     const rows = ["Cartões de crédito", "Moradia", "Saúde", "Cartão adicional"];
     expect(placeCardCategoriesLast(rows, (name) => name)).toEqual(["Moradia", "Saúde", "Cartões de crédito", "Cartão adicional"]);
+  });
+
+  it("ordena o cartão por recorrentes, parcelas pendentes e avulsos", () => {
+    const rows = [
+      entry({ id: "single-z", description: "Zeladoria avulsa", purchase_kind: "one_off" }),
+      entry({ id: "installment-12", description: "Última compra", purchase_kind: "installment", installment_number: 12, installment_count: 12 }),
+      entry({ id: "recurring-z", description: "Seguro mensal", purchase_kind: "recurring" }),
+      entry({ id: "installment-9", description: "Óculos", purchase_kind: "installment", installment_number: 9, installment_count: 10 }),
+      entry({ id: "installment-1", description: "Notebook", purchase_kind: "installment", installment_number: 1, installment_count: 24 }),
+      entry({ id: "recurring-a", description: "Anuidade", recurrence_id: "recurrence-1" }),
+      entry({ id: "installment-7", description: "Celular", installment_purchase_id: "purchase-1", installment_number: 7, installment_count: 8 }),
+      entry({ id: "single-a", description: "Abastecimento", purchase_kind: "one_off" }),
+    ];
+
+    expect(sortCardEntries(rows).map((item) => item.id)).toEqual([
+      "recurring-a",
+      "recurring-z",
+      "installment-1",
+      "installment-7",
+      "installment-9",
+      "installment-12",
+      "single-a",
+      "single-z",
+    ]);
   });
 });

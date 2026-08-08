@@ -24,6 +24,31 @@ export function sortEntriesAlphabetically(entries: FinancialEntryRow[]) {
   return [...entries].sort((left, right) => left.description.localeCompare(right.description, "pt-BR", { sensitivity: "base" }));
 }
 
+function cardEntryKind(entry: FinancialEntryRow) {
+  if (entry.recurrence_id || entry.purchase_kind === "recurring" || entry.origin === "recurrence") return 0;
+  if (entry.installment_purchase_id || entry.purchase_kind === "installment" || entry.origin === "installment") return 1;
+  return 2;
+}
+
+function pendingInstallments(entry: FinancialEntryRow) {
+  if (entry.installment_count === null || entry.installment_number === null) return 0;
+  return Math.max(0, entry.installment_count - entry.installment_number);
+}
+
+export function sortCardEntries(entries: FinancialEntryRow[]) {
+  return [...entries].sort((left, right) => {
+    const kindDifference = cardEntryKind(left) - cardEntryKind(right);
+    if (kindDifference) return kindDifference;
+
+    if (cardEntryKind(left) === 1) {
+      const pendingDifference = pendingInstallments(right) - pendingInstallments(left);
+      if (pendingDifference) return pendingDifference;
+    }
+
+    return left.description.localeCompare(right.description, "pt-BR", { sensitivity: "base" });
+  });
+}
+
 export function isCardCategoryName(name: string) {
   const normalized = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
   return normalized.includes("cartao") || normalized.includes("cartoes");
