@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { addCompetenceMonths, dayBeforeCompetence, monthlyOccurrenceDates, recurrenceOccurrenceId } from "@/lib/finance/recurrence";
+import { addCompetenceMonths, dayBeforeCompetence, monthlyOccurrenceDates, recurrenceOccurrenceId, sortRecurrencesForEditing } from "@/lib/finance/recurrence";
+import type { Recurrence } from "@/lib/finance/types";
 
 describe("recorrências financeiras contínuas", () => {
   it("gera competências mensais até o horizonte consultado", () => {
@@ -32,5 +33,28 @@ describe("recorrências financeiras contínuas", () => {
     expect(recurrenceOccurrenceId("family-a", "recurrence-a", "2026-09-05")).not.toBe(id);
     expect(recurrenceOccurrenceId("family-a", "recurrence-b", "2026-08-05")).not.toBe(id);
     expect(recurrenceOccurrenceId("family-b", "recurrence-a", "2026-08-05")).not.toBe(id);
+  });
+
+  it("ordena ativas e inativas por receitas, despesas e descrição", () => {
+    const recurrence = (id: string, description: string, active: boolean, entryType: string) => ({ id, description, active, entry_type: entryType }) as Recurrence;
+    const rows = [
+      recurrence("inactive-expense", "Água", false, "expense"),
+      recurrence("active-expense-z", "Zeladoria", true, "expense"),
+      recurrence("inactive-income-z", "Venda", false, "income"),
+      recurrence("active-income-z", "Salário", true, "income"),
+      recurrence("active-expense-a", "Condomínio", true, "expense"),
+      recurrence("inactive-income-a", "Aluguel", false, "income"),
+      recurrence("active-income-a", "Aposentadoria", true, "income"),
+    ];
+
+    expect(sortRecurrencesForEditing(rows).map((item) => item.id)).toEqual([
+      "active-income-a",
+      "active-income-z",
+      "active-expense-a",
+      "active-expense-z",
+      "inactive-income-a",
+      "inactive-income-z",
+      "inactive-expense",
+    ]);
   });
 });

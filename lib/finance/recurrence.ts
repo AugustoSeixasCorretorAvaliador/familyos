@@ -1,4 +1,5 @@
 import { deterministicImportUuid } from "@/lib/finance/importer";
+import type { Recurrence } from "@/lib/finance/types";
 
 export type MonthlyRecurrenceWindow = {
   startDate: string;
@@ -6,6 +7,22 @@ export type MonthlyRecurrenceWindow = {
   intervalMonths?: number;
   dayOfMonth?: number | null;
 };
+
+function recurrenceTypeOrder(recurrence: Recurrence) {
+  return recurrence.entry_type === "income" ? 0 : 1;
+}
+
+export function sortRecurrencesForEditing(recurrences: Recurrence[]) {
+  return [...recurrences].sort((left, right) => {
+    const activeDifference = Number(right.active) - Number(left.active);
+    if (activeDifference) return activeDifference;
+
+    const typeDifference = recurrenceTypeOrder(left) - recurrenceTypeOrder(right);
+    if (typeDifference) return typeDifference;
+
+    return (left.description ?? "").localeCompare(right.description ?? "", "pt-BR", { sensitivity: "base" });
+  });
+}
 
 export function recurrenceOccurrenceId(familyId: string, recurrenceId: string, date: string) {
   return deterministicImportUuid(familyId, "recurrence_occurrences", `${recurrenceId}:${date}`);

@@ -1,9 +1,12 @@
+import { Fragment } from "react";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { createRecurrence, endRecurrence, generateRecurrenceOccurrences, toggleRecurrence, updateRecurrence } from "@/app/financas/actions";
 import type { FinanceWorkspace } from "@/lib/finance/types";
+import { sortRecurrencesForEditing } from "@/lib/finance/recurrence";
 import { currency, danger, Empty, field, formatDate, FormPanel, Options, panel, SaveButton } from "@/app/financas/views/shared";
 
 export function RecurrencesView({ workspace, competence, canEdit }: { workspace: FinanceWorkspace; competence: string; canEdit: boolean }) {
+  const orderedRecurrences = sortRecurrencesForEditing(workspace.recurrences);
   const fieldsFor = (item?: FinanceWorkspace["recurrences"][number]) => <>
     <input name="description" required defaultValue={item?.description ?? ""} placeholder="Descrição" className={field}/>
     <select name="entry_type" defaultValue={item?.entry_type ?? "expense"} className={field}><option value="expense">Despesa</option><option value="income">Receita</option></select>
@@ -26,7 +29,9 @@ export function RecurrencesView({ workspace, competence, canEdit }: { workspace:
     </form></FormPanel>}
     <section className={panel}>
       <h2 className="font-semibold">Recorrências</h2>
-      {workspace.recurrences.length ? <div className="mt-4 space-y-3">{workspace.recurrences.map((item) => <article key={item.id} className="rounded-xl border p-4">
+      {orderedRecurrences.length ? <div className="mt-4 space-y-3">{orderedRecurrences.map((item, index) => <Fragment key={item.id}>
+        {!item.active && (index === 0 || orderedRecurrences[index - 1].active) && <div className="mt-6 border-t border-slate-200 pt-5"><h3 className="text-sm font-bold uppercase tracking-wide text-slate-500">Recorrências inativas</h3></div>}
+        <article className="rounded-xl border p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div><p className="font-semibold">{item.description}</p><p className="text-sm text-slate-500">{item.frequency} · {currency.format(item.expected_amount ?? 0)} · próxima {formatDate(item.next_occurrence)}</p></div>
           <span className={`w-fit rounded-full px-2 py-1 text-xs ${item.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{item.active ? "Ativa" : item.end_date ? "Encerrada" : "Pausada"}</span>
@@ -42,7 +47,8 @@ export function RecurrencesView({ workspace, competence, canEdit }: { workspace:
           </form>}
         </div>}
         {canEdit && <FormPanel title="Editar recorrência"><form action={updateRecurrence} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><input type="hidden" name="id" value={item.id}/>{fieldsFor(item)}<div className="sm:col-span-2 lg:col-span-3"><SaveButton/></div></form></FormPanel>}
-      </article>)}</div> : <Empty>Nenhuma recorrência cadastrada.</Empty>}
+        </article>
+      </Fragment>)}</div> : <Empty>Nenhuma recorrência cadastrada.</Empty>}
     </section>
   </div>;
 }
