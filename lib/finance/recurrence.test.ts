@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCompetenceMonths, monthlyOccurrenceDates } from "@/lib/finance/recurrence";
+import { addCompetenceMonths, monthlyOccurrenceDates, recurrenceOccurrenceId } from "@/lib/finance/recurrence";
 
 describe("recorrências financeiras contínuas", () => {
   it("gera competências mensais até o horizonte consultado", () => {
@@ -17,5 +17,15 @@ describe("recorrências financeiras contínuas", () => {
   it("avança o horizonte sem depender do mês corrente", () => {
     expect(addCompetenceMonths("2026-09-01", 12)).toBe("2027-09-01");
     expect(monthlyOccurrenceDates({ startDate: "2026-08-01" }, "2047-08-01")).toHaveLength(253);
+  });
+
+  it("gera id estável por família, recorrência e ocorrência", () => {
+    const id = recurrenceOccurrenceId("family-a", "recurrence-a", "2026-08-05");
+
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(recurrenceOccurrenceId("family-a", "recurrence-a", "2026-08-05")).toBe(id);
+    expect(recurrenceOccurrenceId("family-a", "recurrence-a", "2026-09-05")).not.toBe(id);
+    expect(recurrenceOccurrenceId("family-a", "recurrence-b", "2026-08-05")).not.toBe(id);
+    expect(recurrenceOccurrenceId("family-b", "recurrence-a", "2026-08-05")).not.toBe(id);
   });
 });

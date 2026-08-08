@@ -5,7 +5,7 @@ export type { FinanceImportCommitResult, FinanceImportPreview, ImportPreviewCoun
 
 import { createClient } from "@/lib/supabase/server";
 import { decodeEntryCursor, encodeEntryCursor } from "@/lib/finance/pagination";
-import { addCompetenceMonths, monthlyOccurrenceDates } from "@/lib/finance/recurrence";
+import { addCompetenceMonths, monthlyOccurrenceDates, recurrenceOccurrenceId } from "@/lib/finance/recurrence";
 import { cashflowEntriesForBalance, effectiveCashflowEntries, monthlyEntryAmount } from "@/lib/finance/summary";
 import type { DashboardMetrics, FinanceFilters, FinanceWorkspace, FinancialEntryInsert, FinancialEntryPage, FinancialEntryRow } from "@/lib/finance/types";
 
@@ -170,6 +170,7 @@ export async function ensureFinanceRecurrences(familyId: string, userId: string,
       if (existingMonths.has(`${recurrence.id}:${competence}`)) continue;
       const isIncome = ["income", "investment_redemption", "investment_yield"].includes(recurrence.entry_type!);
       rows.push({
+        id: recurrenceOccurrenceId(familyId, recurrence.id, date),
         family_id: familyId,
         created_by: userId,
         description: recurrence.description ?? "Lançamento recorrente",
@@ -202,7 +203,11 @@ export async function ensureFinanceRecurrences(familyId: string, userId: string,
   }
 
   if (rows.length) {
-    const { error } = await db.from("financial_entries").upsert(rows, { onConflict: "family_id,source_key", ignoreDuplicates: true });
+    // O source_key usa índice único parcial (somente registros ativos), que não
+    // pode ser inferido pelo on_conflict do PostgREST. O id determinístico torna
+    // a inserção concorrente e idempotente pela chave primária sem reativar
+    // ocorrências que tenham sido excluídas logicamente.
+    const { error } = await db.from("financial_entries").upsert(rows, { onConflict: "id", ignoreDuplicates: true });
     throwIfError(error, "materialize_recurrences");
   }
 

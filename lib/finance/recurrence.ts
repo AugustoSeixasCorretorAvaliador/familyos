@@ -1,9 +1,15 @@
+import { deterministicImportUuid } from "@/lib/finance/importer";
+
 export type MonthlyRecurrenceWindow = {
   startDate: string;
   endDate?: string | null;
   intervalMonths?: number;
   dayOfMonth?: number | null;
 };
+
+export function recurrenceOccurrenceId(familyId: string, recurrenceId: string, date: string) {
+  return deterministicImportUuid(familyId, "recurrence_occurrences", `${recurrenceId}:${date}`);
+}
 
 function dateForMonth(year: number, monthIndex: number, dayOfMonth: number) {
   const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
