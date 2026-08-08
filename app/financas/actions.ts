@@ -128,7 +128,7 @@ function entryFromForm(formData: FormData, context: Context): FinancialEntryInse
     competence: competenceValue(formData.get("competence")), entry_type: entryType, cash_direction: direction,
     expected_amount: moneyValue(formData.get("expected_amount"), true)!, actual_amount: actualAmount,
     expected_date: dateValue(formData.get("expected_date")), due_date: dateValue(formData.get("due_date")), effective_date: dateValue(formData.get("effective_date")),
-    status, category_id: optionalId(formData, "category_id"), account_id: optionalId(formData, "account_id"), card_id: optionalId(formData, "card_id"),
+    status, category_id: optionalId(formData, "category_id"), classification_category_id: optionalId(formData, "classification_category_id"), account_id: optionalId(formData, "account_id"), card_id: optionalId(formData, "card_id"),
     responsible_person_id: optionalId(formData, "responsible_person_id"), property_id: optionalId(formData, "property_id"), property_unit_id: optionalId(formData, "property_unit_id"),
     lease_contract_id: optionalId(formData, "lease_contract_id"), investment_asset_id: optionalId(formData, "investment_asset_id"), notes: textValue(formData.get("notes")), origin: "manual",
   };
@@ -176,6 +176,7 @@ export async function createMonthlyProjection(formData: FormData) {
         expected_amount: expectedAmount,
         status: entryType === "income" ? "receivable" : "payable",
         category_id: optionalId(formData, "category_id"),
+        classification_category_id: optionalId(formData, "classification_category_id"),
         account_id: optionalId(formData, "account_id"),
         property_id: optionalId(formData, "property_id"),
         responsible_person_id: optionalId(formData, "responsible_person_id"),

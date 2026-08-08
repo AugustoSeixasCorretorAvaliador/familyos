@@ -1379,6 +1379,7 @@ export type Database = {
           card_invoice_id: string | null
           cash_direction: string
           category_id: string | null
+          classification_category_id: string | null
           competence: string
           created_at: string
           created_by: string | null
@@ -1423,6 +1424,7 @@ export type Database = {
           card_invoice_id?: string | null
           cash_direction: string
           category_id?: string | null
+          classification_category_id?: string | null
           competence: string
           created_at?: string
           created_by?: string | null
@@ -1467,6 +1469,7 @@ export type Database = {
           card_invoice_id?: string | null
           cash_direction?: string
           category_id?: string | null
+          classification_category_id?: string | null
           competence?: string
           created_at?: string
           created_by?: string | null
@@ -1529,6 +1532,13 @@ export type Database = {
           {
             foreignKeyName: "financial_entries_category_family_fkey"
             columns: ["category_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "financial_categories"
+            referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "financial_entries_classification_category_family_fkey"
+            columns: ["classification_category_id", "family_id"]
             isOneToOne: false
             referencedRelation: "financial_categories"
             referencedColumns: ["id", "family_id"]

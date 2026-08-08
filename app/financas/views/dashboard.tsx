@@ -21,6 +21,7 @@ function MonthlyProjectionForm({ workspace, competence, entryType }: { workspace
     <input name="description" required placeholder={isIncome ? "Ex.: Aposentadoria, aluguel, comissão" : "Ex.: Luz, condomínio, academia, IPTU"} className={`${field} sm:col-span-2`}/>
     <input name="expected_amount" required inputMode="decimal" placeholder="Valor mensal" className={field}/>
     <select name="category_id" className={field}><Options placeholder="Categoria (opcional)" rows={categories}/></select>
+    <select name="classification_category_id" className={field} aria-label="Tipo"><Options placeholder="Tipo (opcional)" rows={categories}/></select>
     <select name="account_id" className={field}><Options placeholder="Conta (opcional)" rows={workspace.accounts.map((account) => ({ id: account.id, label: account.institution }))}/></select>
     <select name="property_id" className={field}><Options placeholder={isIncome ? "Imóvel do aluguel (opcional)" : "Imóvel relacionado (opcional)"} rows={workspace.properties.map((property) => ({ id: property.id, label: property.title }))}/></select>
     <p className="text-xs text-slate-500 sm:col-span-2">O valor entra em {monthLabel(competence)} e é provisionado automaticamente nos 12 meses seguintes. Os meses futuros podem ser ajustados depois.</p>
@@ -30,6 +31,7 @@ function MonthlyProjectionForm({ workspace, competence, entryType }: { workspace
 
 function MonthlyEntryList({ title, entries, workspace, competence, kind, orderMode, incomeOrder, expenseOrder, canEdit, canAdmin }: { title: string; entries: FinancialEntryRow[]; workspace: FinanceWorkspace; competence: string; kind: "income" | "expense"; orderMode: MonthlyOrder; incomeOrder: MonthlyOrder; expenseOrder: MonthlyOrder; canEdit: boolean; canAdmin: boolean }) {
   const categoryName = (entry: FinancialEntryRow) => workspace.categories.find((item) => item.id === entry.category_id)?.name ?? "Sem categoria";
+  const classificationName = (entry: FinancialEntryRow) => workspace.categories.find((item) => item.id === entry.classification_category_id)?.name;
   const alphabetical = sortEntriesAlphabetically(entries);
   const categoryGroups = new Map<string, FinancialEntryRow[]>();
   for (const entry of alphabetical) {
@@ -53,7 +55,7 @@ function MonthlyEntryList({ title, entries, workspace, competence, kind, orderMo
       const isSettled = entry.actual_amount !== null;
       const editParams = new URLSearchParams({ view: "movements", competence: entry.competence.slice(0, 7), q: entry.description, return_view: "overview", return_competence: competence.slice(0, 7), income_order: incomeOrder, expense_order: expenseOrder });
       return <article key={entry.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0"><p className="truncate font-medium text-slate-900">{entry.description}</p><p className="text-xs text-slate-500">{categoryName(entry)} · {isSettled ? "realizado" : "provisionado"}{entry.source_key?.startsWith("card-balance:") ? " · cartão consolidado" : ""}</p></div>
+        <div className="min-w-0"><p className="truncate font-medium text-slate-900">{entry.description}</p><p className="text-xs text-slate-500">{categoryName(entry)}{classificationName(entry) ? ` · Tipo: ${classificationName(entry)}` : ""} · {isSettled ? "realizado" : "provisionado"}{entry.source_key?.startsWith("card-balance:") ? " · cartão consolidado" : ""}</p></div>
         <div className="flex shrink-0 flex-wrap items-center gap-3">{canEdit && <form action={toggleEntrySettlement}><input type="hidden" name="id" value={entry.id}/><input type="hidden" name="settled" value={String(!isSettled)}/><input type="hidden" name="competence" value={competence.slice(0, 7)}/><input type="hidden" name="income_order" value={incomeOrder}/><input type="hidden" name="expense_order" value={expenseOrder}/><button type="submit" aria-pressed={isSettled} title={`${settledLabel}: ${isSettled ? "ON" : "OFF"}`} className={`rounded-full px-3 py-1.5 text-[11px] font-bold text-white shadow-sm transition ${isSettled ? "bg-emerald-600 hover:bg-emerald-700" : "bg-red-600 hover:bg-red-700"}`}>{settledLabel} · {isSettled ? "ON" : "OFF"}</button></form>}<span className="font-semibold tabular-nums">{currency.format(monthlyEntryAmount(entry))}</span><Link href={`/financas?${editParams.toString()}`} className="text-xs font-semibold text-sky-700 underline">Editar</Link>{canAdmin && <ArchiveForm id={entry.id} entity="entry" label="Arquivar"/>}</div>
       </article>;
     })}</div></div>)}</div> : <Empty>Nenhum valor cadastrado neste mês.</Empty>}
