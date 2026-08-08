@@ -502,3 +502,165 @@ Validação da implementação:
 | Rota local sem sessão | `307 /login`, comportamento esperado |
 
 O warning de depreciação da API CJS do Vite permanece informativo e preexistente. A Preview remota autenticada deve ser aberta pelo usuário em `/financas/importar`; como o pacote está bloqueado pela própria documentação oficial, nenhum commit foi tentado.
+
+---
+
+## Auditoria de duplicidades e acesso MCP — 07/08/2026 22:40:39 -03:00
+
+### Identificação e acesso
+
+- Arquivo de acompanhamento confirmado: `docs/SUPABASE_RECOVERY_AND_VALIDATION.md`.
+- Projeto auditado: `ffzqloiwmbvbeycaevfm`.
+- MCP utilizado: `supabase_familyos`.
+- Autenticação ativa: Bearer Token fornecido pela variável de ambiente `SUPABASE_FAMILYOS_TOKEN`.
+- Não foram executados `codex mcp login`, OAuth, migration, `DELETE`, commit, push, merge ou publicação.
+- O valor do token não foi lido, exibido ou gravado.
+
+### Critérios utilizados
+
+- Imóvel ativo: `deleted_at is null`, com o `status` registrado separadamente para distinguir `active`, `pending` e `inactive`.
+- Identidade física: nome, endereço normalizado, matrícula, inscrição municipal, CEP, tipo, metadados patrimoniais e datas de criação.
+- Evidência relacional: unidades, contratos, rateios de locação, documentos, proprietários, tarefas e lançamentos financeiros, incluindo vínculos arquivados.
+- Lançamento de agosto de 2026: competência `2026-08-01` ou qualquer `due_date`, `expected_date` ou `effective_date` entre `2026-08-01` e `2026-08-31`.
+- Chave estrita financeira: descrição normalizada, tipo, direção de caixa, valor previsto e realizado, categoria, imóvel, unidade, contrato, cartão, conta, ativo, recorrência, parcelamento, fatura, documento, registros pai/estorno/transferência, competência, datas, status, parcela e origem.
+- Chaves adicionais: `source_key` e `metadata.external_id`.
+- Cópia inequívoca de teste: exigiria marcador objetivo como `is_demo=true`, texto `test`/`teste`/`demo`/`mock`, chave repetida ou histórico que demonstrasse criação de teste. Nenhum desses sinais foi encontrado nos registros ativos examinados.
+
+### Tabelas examinadas
+
+`properties`, `property_units`, `property_owners`, `lease_contracts`, `lease_owner_shares`, `documents`, `document_metadata`, `document_versions`, `family_tasks`, `financial_entries`, `financial_entry_history`, `financial_categories`, `credit_cards`, `accounts`, `installment_purchases`, `card_invoices` e `recurrences`.
+
+### Imóveis possivelmente duplicados
+
+Foram encontrados cinco pares físicos. A confirmação visual do usuário mostrou simultaneamente os dois lados na tela `Imóveis e resultado`: os registros operacionais concentram unidades, contratos e resultado, enquanto os cadastros antigos aparecem sem unidades, sem contratos ativos e com resultado zero. Essa evidência resolveu a classificação pendente. Os cinco cadastros antigos foram arquivados logicamente; documentos, proprietários e histórico permaneceram vinculados e intactos.
+
+| Par | Cópia redundante arquivada | Registro operacional legítimo preservado | Evidência de identidade | Relações verificadas | Classificação |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `0a4ef433-a16a-4432-845b-34d0959a8e10` — Villagio dei Fiori | `053b585e-c444-5d57-a56f-47878a8d4902` — NR181 | Matrícula `19030`; endereço Noronha 181/501 | cópia: 2 proprietários e 2 documentos, sem unidade/contrato/lançamento ativo; preservado: 1 unidade e 1 contrato `vacant` | Duplicata confirmada na interface; lado operacional preservado |
+| 2 | `94544ba5-39f9-439f-abc1-61aee2ae0e19` — Edifício Marte | `24756b6e-8efc-5b79-af5f-ab9d14abd2a5` — Américo | Matrícula `6048` e unidade 1604; logradouro diverge entre nº 22 e nº 21 | cópia: 2 proprietários, 10 documentos e 1 tarefa, sem unidade/contrato/lançamento ativo; preservado: 1 unidade, 1 contrato fechado, 1 documento e 8 lançamentos | Duplicata confirmada na interface; lado com resultado preservado |
+| 3 | `5f03207f-07a4-45e2-a27c-02521df4d2f1` — Prédio Comercial 3 Andares | `d8b6198d-f2d7-57b7-9408-1e4e55ad9e41` — 469 | Mesmo endereço Lopes Trovão 469; matrículas `2.327` e `28.327` | cópia: 2 proprietários e 10 documentos, sem unidade/contrato/lançamento ativo; preservado: 2 unidades, 2 contratos e 15 lançamentos | Duplicata confirmada na interface; lado com unidades e resultado preservado |
+| 4 | `9476afc8-764c-4351-97f8-fb6638f61b41` — Prédio Comercial 3 Lojas 50% | `de4fafbf-e26d-5dfe-94f3-51bf753b0dc7` — Sta38 | Mesmo endereço Santa Rosa 38; matrículas `1.800` e `4.800` | cópia: 2 proprietários, 15 documentos e 1 lançamento já arquivado anteriormente, sem vínculo financeiro ativo; preservado: 3 unidades, 3 contratos e 23 lançamentos | Duplicata confirmada na interface; lado com unidades e resultado preservado |
+| 5 | `f9003859-faf3-438f-9b96-0eb41654aa2a` — Loja Center V | `e74a0ed1-2808-5ae8-b78e-496d9a5a9ded` — CenterV | Matrícula `428`; mesmo endereço Lopes Trovão 134, loja 218 | cópia: 2 proprietários e 5 documentos, sem unidade/contrato/lançamento ativo; preservado: 1 unidade, 1 contrato e 14 lançamentos | Duplicata confirmada na interface; lado com unidades e resultado preservado |
+
+Não existem `lease_owner_shares` associados aos contratos desses cinco pares. Todos os vínculos listados permaneceram intactos. O arquivamento ocorreu em uma única transação às `2026-08-07 22:43:44 -03:00`, com validação das cinco duplas, da mesma família e da ausência de unidades, contratos e lançamentos ativos nos IDs arquivados.
+
+### Auditoria dos lançamentos de agosto de 2026
+
+- Registros no recorte: 96, sendo 95 ativos e 1 previamente arquivado.
+- Origem dos 95 ativos: 48 `import`, 5 `manual`, 16 `recurrence` e 26 `installment`.
+- Registros ativos com `is_demo=true`: 0.
+- Grupos duplicados pela chave estrita: 0.
+- `source_key` repetida entre ativos: 0.
+- `metadata.external_id` repetido entre ativos: 0.
+- Marcadores objetivos de teste: 0.
+
+Uma semelhança ampla foi encontrada:
+
+| ID | Referência fonte | Origem atual | Valor | Classificação |
+| --- | --- | --- | --- | --- |
+| `56f25b17-05d2-5720-8da3-1bdc41525b97` | `rent-SR38-1-2026-08` | `import` | R$ 6.000,00 | Registro legítimo de agosto |
+| `6f54fbdc-5d63-5ca0-98c5-218e6e423983` | `rent-SR38-1-2026-07` | `manual` após atualização registrada no histórico | R$ 6.000,00 | Registro legítimo distinto de julho, atualmente contabilizado na competência de agosto |
+
+Os dois IDs têm descrição, tipo, valor, imóvel e competência atuais iguais, mas `source_key` e `external_id` diferentes. O pacote oficial contém as duas referências como competências de origem distintas (`2026-07` e `2026-08`), portanto não há evidência para arquivar qualquer uma delas.
+
+O lançamento `b8a56337-a90f-4551-8a76-da2df277ed8b` já possuía `deleted_at=2026-07-27T02:35:00.854Z` antes desta auditoria. Ele foi apenas contabilizado nos totais históricos e não foi alterado.
+
+### Classificação e IDs
+
+IDs arquivados logicamente em `properties`, com o motivo `cópia redundante confirmada na interface, sem unidades, contratos ou lançamentos ativos`:
+
+- `0a4ef433-a16a-4432-845b-34d0959a8e10`
+- `94544ba5-39f9-439f-abc1-61aee2ae0e19`
+- `5f03207f-07a4-45e2-a27c-02521df4d2f1`
+- `9476afc8-764c-4351-97f8-fb6638f61b41`
+- `f9003859-faf3-438f-9b96-0eb41654aa2a`
+
+Registros operacionais legítimos preservados:
+
+- `053b585e-c444-5d57-a56f-47878a8d4902` — NR181
+- `24756b6e-8efc-5b79-af5f-ab9d14abd2a5` — Américo
+- `d8b6198d-f2d7-57b7-9408-1e4e55ad9e41` — 469
+- `de4fafbf-e26d-5dfe-94f3-51bf753b0dc7` — Sta38
+- `e74a0ed1-2808-5ae8-b78e-496d9a5a9ded` — CenterV
+
+Lançamentos legítimos preservados após a comparação financeira:
+
+- `56f25b17-05d2-5720-8da3-1bdc41525b97`
+- `6f54fbdc-5d63-5ca0-98c5-218e6e423983`
+
+Foram executados cinco arquivamentos lógicos por `UPDATE properties SET deleted_at = ...`, dentro de uma única transação. Nenhum `DELETE` físico foi executado.
+
+### Validação dos totais
+
+| Tabela/recorte | Antes | Depois | Variação |
+| --- | ---: | ---: | ---: |
+| `properties` total / não arquivados / arquivados | 13 / 13 / 0 | 13 / 8 / 5 | 0 / -5 / +5 |
+| `properties` por status não arquivado | 11 `active`, 1 `pending`, 1 `inactive` | 6 `active`, 1 `pending`, 1 `inactive` | -5 `active` |
+| `property_units` total / não arquivadas / arquivadas | 8 / 8 / 0 | 8 / 8 / 0 | 0 |
+| `lease_contracts` total / não arquivados / arquivados | 8 / 8 / 0 | 8 / 8 / 0 | 0 |
+| `documents` total / não arquivados / arquivados | 74 / 74 / 0 | 74 / 74 / 0 | 0 |
+| `financial_entries` total / não arquivados / arquivados | 236 / 235 / 1 | 236 / 235 / 1 | 0 |
+| Lançamentos no recorte de agosto total / ativos / arquivados | 96 / 95 / 1 | 96 / 95 / 1 | 0 |
+
+Resultado: cinco imóveis redundantes arquivados logicamente; unidades, contratos, documentos e lançamentos mantiveram os mesmos totais; nenhum relacionamento foi rompido e nenhum histórico foi removido.
+
+### Arquivos e diretórios protegidos
+
+Permaneceram integralmente sem alteração:
+
+- `sql/diagnostics/`
+- `sql/seeds/004_seixasos_mvp_data_backfill.sql`
+- `mcp-server/`
+
+As modificações locais preexistentes e não relacionadas no módulo financeiro também foram preservadas.
+
+### Correção da classificação dos imóveis — 07/08/2026 22:50:47 -03:00
+
+Esta seção **substitui a classificação e os IDs finais da ação registrada anteriormente neste mesmo checkpoint**. O usuário esclareceu que o critério canônico do módulo Imóveis é preservar ativos os cadastros que concentram os documentos anexados, e não os cadastros operacionais paralelos que concentram unidades e lançamentos.
+
+A correção foi executada em uma única transação recuperável:
+
+1. os cinco imóveis documentais anteriormente arquivados tiveram `deleted_at` restaurado para `null`;
+2. os cinco cadastros operacionais paralelos receberam o mesmo novo `deleted_at`, `2026-08-08T01:50:47.809301Z`;
+3. nenhuma unidade, contrato, documento, proprietário, lançamento ou linha de histórico foi movida, editada ou removida;
+4. nenhum `DELETE` físico foi executado.
+
+#### IDs reativados e preservados como canônicos documentais
+
+| ID | Imóvel | Documentos ativos |
+| --- | --- | ---: |
+| `94544ba5-39f9-439f-abc1-61aee2ae0e19` | Edifício Marte | 10 |
+| `f9003859-faf3-438f-9b96-0eb41654aa2a` | Loja Center V | 5 |
+| `5f03207f-07a4-45e2-a27c-02521df4d2f1` | Prédio Comercial 3 Andares | 10 |
+| `9476afc8-764c-4351-97f8-fb6638f61b41` | Prédio Comercial 3 Lojas 50% | 15 |
+| `0a4ef433-a16a-4432-845b-34d0959a8e10` | Villagio dei Fiori | 2 |
+
+#### IDs operacionais arquivados após a correção
+
+| ID | Imóvel | Documentos | Unidades | Contratos | Lançamentos | Motivo |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `d8b6198d-f2d7-57b7-9408-1e4e55ad9e41` | 469 | 0 | 2 | 2 | 15 | Paralelo sem documentos; preservar o cadastro documental Lopes Trovão 469 |
+| `24756b6e-8efc-5b79-af5f-ab9d14abd2a5` | Américo | 1 | 1 | 1 | 8 | Paralelo com apenas 1 documento; Edifício Marte concentra 10 documentos e foi definido como canônico |
+| `e74a0ed1-2808-5ae8-b78e-496d9a5a9ded` | CenterV | 0 | 1 | 1 | 14 | Paralelo sem documentos; preservar Loja Center V |
+| `053b585e-c444-5d57-a56f-47878a8d4902` | NR181 | 0 | 1 | 1 | 0 | Paralelo sem documentos; preservar Villagio dei Fiori |
+| `de4fafbf-e26d-5dfe-94f3-51bf753b0dc7` | Sta38 | 0 | 3 | 3 | 23 | Paralelo sem documentos; preservar Prédio Comercial 3 Lojas 50% |
+
+Os relacionamentos dos IDs arquivados continuam integralmente existentes e recuperáveis. O arquivamento afeta somente a visibilidade do imóvel por `deleted_at`.
+
+#### Validação final após a correção
+
+| Tabela/recorte | Total | Não arquivados | Arquivados |
+| --- | ---: | ---: | ---: |
+| `properties` | 13 | 8 | 5 |
+| `financial_entries` | 236 | 235 | 1 |
+
+Totais relacionais, sem variação em relação ao início da auditoria:
+
+- `property_units`: 8;
+- `lease_contracts`: 8;
+- `documents`: 74;
+- `financial_entries`: 236.
+
+Imóveis visíveis finais: Edifício Diamond, Edifício Marte, Edifício Notting Hill Residence, Loja Center V, Porto Real Resort, Prédio Comercial 3 Andares, Prédio Comercial 3 Lojas 50% e Villagio dei Fiori. Todos possuem `status=active` e pelo menos um documento ativo.
+
+Os caminhos protegidos `sql/diagnostics/`, `sql/seeds/004_seixasos_mvp_data_backfill.sql` e `mcp-server/` permaneceram sem alteração durante a correção.

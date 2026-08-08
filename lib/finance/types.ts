@@ -66,6 +66,8 @@ export type FinanceWorkspace = {
 };
 
 export type DashboardMetrics = {
+  monthlyIncome: number;
+  monthlyExpense: number;
   available: number;
   projected: number;
   expectedIncome: number;

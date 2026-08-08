@@ -5,7 +5,7 @@ const items: Array<{ view: FinanceView | "import"; label: string; href?: string 
   { view: "overview", label: "Visão geral" }, { view: "movements", label: "Movimentações" },
   { view: "accounts", label: "Contas" }, { view: "cards", label: "Cartões" }, { view: "invoices", label: "Faturas" },
   { view: "installments", label: "Parcelamentos" }, { view: "recurrences", label: "Recorrências" },
-  { view: "properties", label: "Imóveis e aluguéis" }, { view: "investments", label: "Investimentos" },
+  { view: "properties", label: "Imóveis (cadastro)" }, { view: "investments", label: "Investimentos" },
   { view: "categories", label: "Categorias" }, { view: "alerts", label: "Alertas" },
   { view: "import", label: "Importar", href: "/financas/importar" },
 ];

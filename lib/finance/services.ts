@@ -5,7 +5,10 @@ export type { FinanceImportCommitResult, FinanceImportPreview, ImportPreviewCoun
 
 import { createClient } from "@/lib/supabase/server";
 import { decodeEntryCursor, encodeEntryCursor } from "@/lib/finance/pagination";
+import { effectiveCashflowEntries, monthlyEntryAmount } from "@/lib/finance/summary";
 import type { DashboardMetrics, FinanceFilters, FinanceWorkspace, FinancialEntryPage, FinancialEntryRow } from "@/lib/finance/types";
+
+export { cashflowEntriesForMonth, monthlyEntryAmount } from "@/lib/finance/summary";
 
 //const ACTIVE = { deleted_at: null } as const;
 
@@ -118,7 +121,7 @@ export function filterEntries(entries: FinancialEntryRow[], filters: FinanceFilt
 }
 
 export function calculateDashboard(workspace: FinanceWorkspace, competence: string, today = new Date().toISOString().slice(0, 10)): DashboardMetrics {
-  const activeEntries = workspace.entries.filter((entry) => !entry.deleted_at && !["cancelled", "reversed"].includes(entry.status));
+  const activeEntries = effectiveCashflowEntries(workspace.entries);
   const month = activeEntries.filter((entry) => entry.competence === competence);
   const isIncome = (entry: FinancialEntryRow) => ["income", "investment_yield"].includes(entry.entry_type);
   const isExpense = (entry: FinancialEntryRow) => entry.entry_type === "expense";
@@ -129,15 +132,19 @@ export function calculateDashboard(workspace: FinanceWorkspace, competence: stri
   const actualIncome = month.filter(isIncome).reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
   const expectedExpense = month.filter(isExpense).reduce((sum, entry) => sum + entry.expected_amount, 0);
   const actualExpense = month.filter(isExpense).reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
+  const monthlyIncome = month.filter(isIncome).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
+  const monthlyExpense = month.filter(isExpense).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
   const available = opening + cashIn - cashOut;
   const projected = available + expectedIncome - actualIncome - (expectedExpense - actualExpense);
   const activePositions = new Map<string, number>();
-  for (const position of workspace.positions) if (!activePositions.has(position.asset_id)) activePositions.set(position.asset_id, position.market_value);
-  const rentalIncome = month.filter((entry) => entry.entry_type === "income" && entry.lease_contract_id).reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
-  const propertyExpenses = month.filter((entry) => entry.entry_type === "expense" && entry.property_id).reduce((sum, entry) => sum + (entry.actual_amount ?? entry.expected_amount), 0);
+  const activeAssetIds = new Set(workspace.assets.map((asset) => asset.id));
+  for (const position of workspace.positions) if (activeAssetIds.has(position.asset_id) && !activePositions.has(position.asset_id)) activePositions.set(position.asset_id, position.market_value);
+  const rentalIncome = month.filter((entry) => entry.entry_type === "income" && (entry.property_id || entry.lease_contract_id)).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
+  const propertyExpenses = month.filter((entry) => entry.entry_type === "expense" && entry.property_id).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
   return {
+    monthlyIncome, monthlyExpense,
     available, projected, expectedIncome, actualIncome, expectedExpense, actualExpense,
-    monthlyResult: actualIncome - actualExpense,
+    monthlyResult: monthlyIncome - monthlyExpense,
     dueSoon: activeEntries.filter((entry) => entry.due_date && entry.due_date >= today && entry.due_date <= addDays(today, 7) && entry.actual_amount === null).length,
     overdue: activeEntries.filter((entry) => entry.due_date && entry.due_date < today && entry.actual_amount === null).length,
     invoices: workspace.invoices.filter((invoice) => invoice.competence === competence && !["paid", "cancelled"].includes(invoice.status)).reduce((sum, invoice) => sum + (invoice.closed_amount ?? invoice.expected_amount), 0),
@@ -156,14 +163,15 @@ function addDays(iso: string, days: number) {
 }
 
 export function buildTimeline(entries: FinancialEntryRow[], centerCompetence: string, months = 24) {
+  const activeEntries = effectiveCashflowEntries(entries);
   const center = new Date(`${centerCompetence}T00:00:00Z`);
   return Array.from({ length: months }, (_, index) => {
     const offset = index - Math.floor(months / 3);
     const date = new Date(Date.UTC(center.getUTCFullYear(), center.getUTCMonth() + offset, 1));
     const competence = date.toISOString().slice(0, 10);
-    const selected = entries.filter((entry) => entry.competence === competence && !entry.deleted_at && !["cancelled", "reversed"].includes(entry.status));
-    const income = selected.filter((entry) => ["income", "investment_yield"].includes(entry.entry_type)).reduce((sum, entry) => sum + entry.expected_amount, 0);
-    const expense = selected.filter((entry) => entry.entry_type === "expense").reduce((sum, entry) => sum + entry.expected_amount, 0);
+    const selected = activeEntries.filter((entry) => entry.competence === competence);
+    const income = selected.filter((entry) => ["income", "investment_yield"].includes(entry.entry_type)).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
+    const expense = selected.filter((entry) => entry.entry_type === "expense").reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
     return { competence, income, expense, result: income - expense };
   });
 }

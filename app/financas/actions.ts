@@ -134,6 +134,99 @@ export async function createEntry(formData: FormData) {
   feedback("movements", "created");
 }
 
+function addCompetenceMonths(competence: string, months: number) {
+  const date = new Date(`${competence}T00:00:00Z`);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  return date.toISOString().slice(0, 7) + "-01";
+}
+
+function dateForDay(competence: string, day: number | null) {
+  if (!day) return null;
+  const [year, month] = competence.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${competence.slice(0, 7)}-${String(Math.min(day, lastDay)).padStart(2, "0")}`;
+}
+
+export async function createMonthlyProjection(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData);
+    const entryType = oneOf(formData.get("entry_type"), ["income", "expense"] as const);
+    const competence = competenceValue(formData.get("competence"));
+    const expectedAmount = moneyValue(formData.get("expected_amount"), true)!;
+    const monthsAhead = integerValue(formData.get("months_ahead") ?? "12", { min: 0, max: 24, required: true })!;
+    const description = textValue(formData.get("description"), true)!;
+    const seriesId = crypto.randomUUID();
+    const rows: FinancialEntryInsert[] = Array.from({ length: monthsAhead + 1 }, (_, index) => {
+      const month = addCompetenceMonths(competence, index);
+      return {
+        family_id: context.family.id,
+        created_by: context.user.id,
+        description,
+        competence: month,
+        entry_type: entryType,
+        cash_direction: entryType === "income" ? "inflow" : "outflow",
+        expected_amount: expectedAmount,
+        status: entryType === "income" ? "receivable" : "payable",
+        category_id: optionalId(formData, "category_id"),
+        account_id: optionalId(formData, "account_id"),
+        property_id: optionalId(formData, "property_id"),
+        responsible_person_id: optionalId(formData, "responsible_person_id"),
+        origin: "manual",
+        purchase_kind: "recurring",
+        source_key: `monthly-plan:${seriesId}:${month}`,
+        metadata: { projection_series_id: seriesId, projection_source_competence: competence, projected: index > 0 },
+      };
+    });
+    const { error } = await createClient().from("financial_entries").insert(rows);
+    if (error) throw error;
+  } catch (error) { actionFailure(error, context, "create_monthly_projection", "overview"); }
+  feedback("overview", "projection_created");
+}
+
+export async function saveCardBalance(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData);
+    const cardId = textValue(formData.get("card_id"), true)!;
+    const competence = competenceValue(formData.get("competence"));
+    const expectedAmount = moneyValue(formData.get("expected_amount"), true)!;
+    const db = createClient();
+    const { data: card, error: cardError } = await db.from("credit_cards").select("id,name,due_day").eq("id", cardId).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+    if (cardError || !card) throw cardError ?? new Error("not_found");
+
+    const months = Array.from({ length: 13 }, (_, index) => addCompetenceMonths(competence, index));
+    const sourceKeys = months.map((month) => `card-balance:${card.id}:${month}`);
+    const { data: existing, error: existingError } = await db.from("financial_entries").select("source_key").eq("family_id", context.family.id).in("source_key", sourceKeys).is("deleted_at", null);
+    if (existingError) throw existingError;
+    const existingKeys = new Set((existing ?? []).map((entry) => entry.source_key));
+    const missing: FinancialEntryInsert[] = months.filter((month) => !existingKeys.has(`card-balance:${card.id}:${month}`)).map((month) => ({
+      family_id: context.family.id,
+      created_by: context.user.id,
+      description: `Fatura consolidada · ${card.name}`,
+      competence: month,
+      entry_type: "expense",
+      cash_direction: "outflow",
+      expected_amount: expectedAmount,
+      expected_date: dateForDay(month, card.due_day),
+      due_date: dateForDay(month, card.due_day),
+      status: "payable",
+      card_id: card.id,
+      origin: "manual",
+      purchase_kind: "recurring",
+      source_key: `card-balance:${card.id}:${month}`,
+      metadata: { consolidated_card_balance: true, projection_source_competence: competence, projected: month !== competence },
+    }));
+    if (missing.length) {
+      const { error } = await db.from("financial_entries").insert(missing);
+      if (error) throw error;
+    }
+    const { error: updateError } = await db.from("financial_entries").update({ expected_amount: expectedAmount, description: `Fatura consolidada · ${card.name}`, updated_by: context.user.id }).eq("family_id", context.family.id).eq("source_key", `card-balance:${card.id}:${competence}`).is("deleted_at", null);
+    if (updateError) throw updateError;
+  } catch (error) { actionFailure(error, context, "save_card_balance", "cards"); }
+  feedback("cards", "balance_saved");
+}
+
 export async function updateEntry(formData: FormData) {
   const context = await requireEditor();
   try {
@@ -347,7 +440,7 @@ export async function updateInvestmentAsset(formData: FormData) {
 
 export async function createInvestmentPosition(formData: FormData) {
   const context = await requireEditor();
-  try { assertNoClientFamilyId(formData); const { error } = await createClient().from("investment_positions").insert({ family_id: context.family.id, created_by: context.user.id, asset_id: textValue(formData.get("asset_id"), true)!, position_date: dateValue(formData.get("position_date"), true)!, market_value: moneyValue(formData.get("market_value"), true)!, cost_amount: moneyValue(formData.get("cost_amount")), quantity: moneyValue(formData.get("quantity")), unit_price: moneyValue(formData.get("unit_price")) }); if (error) throw error; }
+  try { assertNoClientFamilyId(formData); const { error } = await createClient().from("investment_positions").upsert({ family_id: context.family.id, created_by: context.user.id, updated_by: context.user.id, asset_id: textValue(formData.get("asset_id"), true)!, position_date: dateValue(formData.get("position_date"), true)!, market_value: moneyValue(formData.get("market_value"), true)!, cost_amount: moneyValue(formData.get("cost_amount")), quantity: moneyValue(formData.get("quantity")), unit_price: moneyValue(formData.get("unit_price")) }, { onConflict: "asset_id,position_date" }); if (error) throw error; }
   catch (error) { actionFailure(error, context, "create_position", "investments"); }
   feedback("investments", "created");
 }

@@ -5,6 +5,14 @@
 - Project ref: `ffzqloiwmbvbeycaevfm`.
 - Antes de qualquer operacao remota, confirme que o projeto acessivel possui exatamente esse identificador.
 
+## Acesso remoto pelo Codex
+
+- O MCP configurado para este projeto e `supabase_familyos`.
+- A autenticacao ativa usa `Authorization: Bearer` com o token fornecido exclusivamente pela variavel de ambiente `SUPABASE_FAMILYOS_TOKEN`.
+- Nao execute `codex mcp login` para `supabase_familyos` e nao substitua essa configuracao por OAuth.
+- Nunca grave, imprima, versione ou exponha o valor de `SUPABASE_FAMILYOS_TOKEN`.
+- Esta autenticacao do MCP e separada da autenticacao dos usuarios da aplicacao FamilyOS.
+
 ## Migrations
 
 - Toda mudanca de schema deve nascer em uma migration versionada.

@@ -17,6 +17,15 @@
 - Nunca registre bearer tokens, tokens Google, conteudo Base64 ou dados pessoais completos.
 - `SUPABASE_SERVICE_ROLE` e permitido somente no processo backend do MCP.
 
+## Acesso remoto do Codex ao Supabase
+
+- Servidor configurado: `supabase_familyos`.
+- Projeto vinculado: `ffzqloiwmbvbeycaevfm`.
+- Autenticacao ativa: Bearer Token fornecido pela variavel de ambiente `SUPABASE_FAMILYOS_TOKEN`.
+- Nao execute `codex mcp login` e nao troque a autenticacao deste servidor por OAuth.
+- O valor do token nunca deve aparecer em arquivos, comandos documentados, logs ou respostas.
+- OAuth continua sendo um fluxo separado da aplicacao quando aplicavel; nao e o metodo de autenticacao do MCP `supabase_familyos`.
+
 ## Contexto stdio
 
 Chamadas locais autenticadas usam `_meta` com namespace `familyos/*`:
