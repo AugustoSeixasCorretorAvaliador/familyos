@@ -1,4 +1,5 @@
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
+import { DuplicateAmountForm } from "@/app/financas/duplicate-amount-form";
 import { archiveInstallmentPurchase, cancelFutureInstallments, closeInvoice, createInstallmentPurchase, createInvoice, payInvoice, reverseInvoicePayment, updateInstallmentPurchase } from "@/app/financas/actions";
 import { currentCompetence } from "@/lib/finance/services";
 import type { FinanceWorkspace } from "@/lib/finance/types";
@@ -18,7 +19,7 @@ function InstallmentFields({ workspace, purchase, categoryId }: { workspace: Fin
 
 export function InstallmentsView({ workspace, canEdit }: { workspace: FinanceWorkspace; canEdit: boolean }) {
   return <div className="space-y-5">
-    {canEdit && <FormPanel title="Nova compra parcelada"><form action={createInstallmentPurchase} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><InstallmentFields workspace={workspace}/><p className="text-xs text-slate-500 sm:col-span-2 lg:col-span-3">Informe o valor total da compra; o sistema divide esse total pela quantidade de parcelas. Ao selecionar um cartão, a Visão Geral agrupa automaticamente as parcelas nesse cartão.</p><div className="sm:col-span-2 lg:col-span-3"><SaveButton label="Gerar parcelas"/></div></form></FormPanel>}
+    {canEdit && <FormPanel title="Nova compra parcelada"><DuplicateAmountForm action={createInstallmentPurchase} amountField="total_amount" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><InstallmentFields workspace={workspace}/><p className="text-xs text-slate-500 sm:col-span-2 lg:col-span-3">Informe o valor total da compra; o sistema divide esse total pela quantidade de parcelas. Ao selecionar um cartão, a Visão Geral agrupa automaticamente as parcelas nesse cartão.</p><div className="sm:col-span-2 lg:col-span-3"><SaveButton label="Gerar parcelas"/></div></DuplicateAmountForm></FormPanel>}
     <section className={panel}><h2 className="font-semibold">Parcelamentos</h2>{workspace.installments.length ? <div className="mt-4 space-y-3">{workspace.installments.map((purchase) => {
       const installments = workspace.entries.filter((entry) => entry.installment_purchase_id === purchase.id).sort((a, b) => (a.installment_number ?? 0) - (b.installment_number ?? 0));
       return <article key={purchase.id} className="rounded-xl border p-4"><div className="flex flex-col gap-2 sm:flex-row sm:justify-between"><div><p className="font-semibold">{purchase.description}</p><p className="text-sm text-slate-500">{purchase.installment_count} parcelas · {purchase.status}</p></div><p className="font-semibold">{currency.format(purchase.total_amount)}</p></div>

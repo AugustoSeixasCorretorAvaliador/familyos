@@ -1,5 +1,5 @@
 import { deterministicImportUuid } from "@/lib/finance/importer";
-import type { Recurrence } from "@/lib/finance/types";
+import type { FinancialEntryRow, Recurrence } from "@/lib/finance/types";
 
 export type MonthlyRecurrenceWindow = {
   startDate: string;
@@ -22,6 +22,19 @@ export function sortRecurrencesForEditing(recurrences: Recurrence[]) {
 
     return (left.description ?? "").localeCompare(right.description ?? "", "pt-BR", { sensitivity: "base" });
   });
+}
+
+export function recurrenceRangesFromEntries(entries: FinancialEntryRow[]) {
+  const ranges = new Map<string, { start: string; end: string }>();
+  for (const entry of entries) {
+    if (!entry.recurrence_id || entry.deleted_at || ["cancelled", "reversed"].includes(entry.status)) continue;
+    const range = ranges.get(entry.recurrence_id);
+    ranges.set(entry.recurrence_id, {
+      start: !range || entry.competence < range.start ? entry.competence : range.start,
+      end: !range || entry.competence > range.end ? entry.competence : range.end,
+    });
+  }
+  return ranges;
 }
 
 export function recurrenceActivationPatch(active: boolean, startDate: string) {

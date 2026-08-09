@@ -31,6 +31,21 @@ function financeUrl(view: string, values: RedirectValues = {}) {
   return `/financas?${params.toString()}`;
 }
 
+export async function checkDuplicateFinancialAmount(rawValue: string, currentAmount: number | null = null) {
+  const context = await requireEditor();
+  const amount = moneyValue(rawValue, true)!;
+  if (currentAmount !== null && Math.round(currentAmount * 100) === Math.round(amount * 100)) return false;
+  const db = createClient();
+  const [entries, recurrences, installments] = await Promise.all([
+    db.from("financial_entries").select("id").eq("family_id", context.family.id).eq("expected_amount", amount).is("deleted_at", null).neq("status", "cancelled").neq("status", "reversed").limit(1),
+    db.from("recurrences").select("id").eq("family_id", context.family.id).eq("expected_amount", amount).eq("active", true).is("deleted_at", null).limit(1),
+    db.from("installment_purchases").select("id").eq("family_id", context.family.id).eq("total_amount", amount).eq("status", "active").is("deleted_at", null).limit(1),
+  ]);
+  const error = entries.error ?? recurrences.error ?? installments.error;
+  if (error) throw error;
+  return Boolean(entries.data?.length || recurrences.data?.length || installments.data?.length);
+}
+
 function preserveSelectedCompetence(values: RedirectValues) {
   if (values.competence) return values;
   const referer = headers().get("referer");

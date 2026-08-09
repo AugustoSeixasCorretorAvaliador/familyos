@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
+import { DuplicateAmountForm } from "@/app/financas/duplicate-amount-form";
 import { createRecurrence, endRecurrence, generateRecurrenceOccurrences, toggleRecurrence, updateRecurrence } from "@/app/financas/actions";
 import type { FinanceWorkspace } from "@/lib/finance/types";
 import { sortRecurrencesForEditing } from "@/lib/finance/recurrence";
@@ -56,7 +57,7 @@ export function RecurrencesView({ workspace, competence, canEdit, filters }: { w
       <select name="recurrence_category" defaultValue={filters.categoryId} aria-label="Filtrar por categoria ou tipo" className={field}><Options placeholder="Todas as categorias e tipos" rows={categoryRows}/></select>
       <div className="flex gap-2"><button className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">Filtrar</button><Link href={`/financas?view=recurrences&competence=${competence.slice(0, 7)}`} className="rounded-xl border px-4 py-2.5 text-center text-sm">Limpar</Link></div>
     </form>
-    {canEdit && <FormPanel title="Nova recorrência"><form action={createRecurrence} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{fieldsFor()}<p className="text-xs text-slate-500 sm:col-span-2 lg:col-span-3">Ao criar uma recorrência mensal, a Visão Geral materializa automaticamente o período selecionado e os 12 meses seguintes. Use “Gerar ocorrências” para ampliar a projeção, por exemplo em mais 15 ocorrências.</p><div className="sm:col-span-2 lg:col-span-3"><SaveButton label="Criar recorrência"/></div></form></FormPanel>}
+    {canEdit && <FormPanel title="Nova recorrência"><DuplicateAmountForm action={createRecurrence} amountField="expected_amount" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{fieldsFor()}<p className="text-xs text-slate-500 sm:col-span-2 lg:col-span-3">Ao criar uma recorrência mensal, a Visão Geral materializa automaticamente o período selecionado e os 12 meses seguintes. Use “Gerar ocorrências” para ampliar a projeção, por exemplo em mais 15 ocorrências.</p><div className="sm:col-span-2 lg:col-span-3"><SaveButton label="Criar recorrência"/></div></DuplicateAmountForm></FormPanel>}
     <section className={panel}>
       <h2 className="font-semibold">Recorrências</h2>
       {orderedRecurrences.length ? <div className="mt-4 space-y-3">{orderedRecurrences.map((item, index) => <Fragment key={item.id}>

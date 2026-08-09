@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { addCompetenceMonths, dayBeforeCompetence, monthlyOccurrenceDates, recurrenceActivationPatch, recurrenceOccurrenceId, sortRecurrencesForEditing } from "@/lib/finance/recurrence";
+import { addCompetenceMonths, dayBeforeCompetence, monthlyOccurrenceDates, recurrenceActivationPatch, recurrenceOccurrenceId, recurrenceRangesFromEntries, sortRecurrencesForEditing } from "@/lib/finance/recurrence";
+import type { FinancialEntryRow } from "@/lib/finance/types";
 import type { Recurrence } from "@/lib/finance/types";
 
 describe("recorrências financeiras contínuas", () => {
+  it("calcula o período pelos lançamentos recorrentes realmente ativos", () => {
+    const entry = (competence: string, status = "payable", recurrenceId: string | null = "r1") => ({ competence, status, recurrence_id: recurrenceId, deleted_at: null }) as FinancialEntryRow;
+    const ranges = recurrenceRangesFromEntries([
+      entry("2027-12-01"),
+      entry("2026-08-01"),
+      entry("2028-01-01", "cancelled"),
+      entry("2026-07-01", "payable", null),
+    ]);
+    expect(ranges.get("r1")).toEqual({ start: "2026-08-01", end: "2027-12-01" });
+  });
   it("gera competências mensais até o horizonte consultado", () => {
     expect(monthlyOccurrenceDates({ startDate: "2026-08-01" }, "2026-11-01")).toEqual([
       "2026-08-01", "2026-09-01", "2026-10-01", "2026-11-01",
