@@ -6,7 +6,7 @@ import { AlertsView, DashboardView } from "@/app/financas/views/dashboard";
 import { InvoicesView, InstallmentsView } from "@/app/financas/views/billing";
 import { InvestmentsView, PropertiesView } from "@/app/financas/views/assets";
 import { MovementsView } from "@/app/financas/views/movements";
-import { RecurrencesView } from "@/app/financas/views/recurrences";
+import { RecurrencesView, type RecurrenceFilters } from "@/app/financas/views/recurrences";
 import { getActionErrorMessage } from "@/lib/action-feedback";
 import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
 import { currentCompetence, ensureFinanceRecurrences, getFinanceWorkspace, getFinancialEntryPage } from "@/lib/finance/services";
@@ -50,6 +50,12 @@ export default async function FinancasPage({ searchParams }: PageProps) {
     realization: valueOf(searchParams, "realization") as FinanceFilters["realization"],
     query: valueOf(searchParams, "q"),
   };
+  const recurrenceFilters: RecurrenceFilters = {
+    query: valueOf(searchParams, "recurrence_q"),
+    entryType: valueOf(searchParams, "recurrence_type"),
+    status: valueOf(searchParams, "recurrence_status"),
+    categoryId: valueOf(searchParams, "recurrence_category"),
+  };
   const canEdit = canEditFamily(context);
   if (canEdit) await ensureFinanceRecurrences(context.family.id, context.user.id, competence);
   const [workspace, movementPage] = await Promise.all([
@@ -73,7 +79,7 @@ export default async function FinancasPage({ searchParams }: PageProps) {
     {view === "cards" && <CardsView workspace={workspace} competence={competence} canEdit={canEdit} canAdmin={canAdmin}/>}
     {view === "invoices" && <InvoicesView workspace={workspace} canEdit={canEdit}/>}
     {view === "installments" && <InstallmentsView workspace={workspace} canEdit={canEdit}/>}
-    {view === "recurrences" && <RecurrencesView workspace={workspace} competence={competence} canEdit={canEdit}/>}
+    {view === "recurrences" && <RecurrencesView workspace={workspace} competence={competence} canEdit={canEdit} filters={recurrenceFilters}/>}
     {view === "properties" && <PropertiesView workspace={workspace} canEdit={canEdit} canAdmin={canAdmin}/>}
     {view === "investments" && <InvestmentsView workspace={workspace} canEdit={canEdit} canAdmin={canAdmin}/>}
     {view === "categories" && <CategoriesView workspace={workspace} canEdit={canEdit} canAdmin={canAdmin}/>}

@@ -439,11 +439,14 @@ export async function toggleCardSettlement(formData: FormData) {
     const month = competenceValue(formData.get("competence"));
     const settled = formData.get("settled") === "true";
     const db = createClient();
-    const { data: entries, error: readError } = await db.from("financial_entries")
-      .select("id,expected_amount,source_key")
-      .eq("family_id", context.family.id).eq("card_id", cardId).eq("competence", month)
-      .eq("entry_type", "expense").is("deleted_at", null).neq("status", "cancelled");
-    if (readError) throw readError;
+    const [{ data: entries, error: readError }, { data: invoice, error: invoiceError }, { data: card, error: cardError }] = await Promise.all([
+      db.from("financial_entries").select("id,expected_amount,source_key").eq("family_id", context.family.id).eq("card_id", cardId).eq("competence", month).eq("entry_type", "expense").is("deleted_at", null).neq("status", "cancelled"),
+      db.from("card_invoices").select("id,closed_amount,expected_amount,closing_date,payment_account_id,status").eq("family_id", context.family.id).eq("card_id", cardId).eq("competence", month).is("deleted_at", null).maybeSingle(),
+      db.from("credit_cards").select("payment_account_id").eq("family_id", context.family.id).eq("id", cardId).is("deleted_at", null).maybeSingle(),
+    ]);
+    if (readError || invoiceError || cardError) throw readError ?? invoiceError ?? cardError;
+    const paymentAccountId = invoice?.payment_account_id ?? card?.payment_account_id ?? null;
+    if (settled && invoice && !paymentAccountId) throw new FinanceValidationError("payment_account_required");
     const individualEntries = (entries ?? []).filter((entry) => !entry.source_key?.startsWith("card-balance:"));
     const effectiveDate = settled ? new Date().toISOString().slice(0, 10) : null;
     // Limita a concorrência para cartões com muitos lançamentos e evita repetir
@@ -457,6 +460,28 @@ export async function toggleCardSettlement(formData: FormData) {
       }).eq("id", entry.id).eq("family_id", context.family.id).is("deleted_at", null)));
       const failed = updates.find((result) => result.error);
       if (failed?.error) throw failed.error;
+    }
+    if (invoice) {
+      const sourceKey = `invoice-payment:${invoice.id}`;
+      const { data: payment, error: paymentReadError } = await db.from("financial_entries").select("id").eq("family_id", context.family.id).eq("source_key", sourceKey).is("deleted_at", null).maybeSingle();
+      if (paymentReadError) throw paymentReadError;
+      const amount = invoice.closed_amount ?? invoice.expected_amount;
+      if (settled) {
+        const paymentValues = { description: "Pagamento de fatura", competence: month, entry_type: "transfer" as const, cash_direction: "outflow" as const, expected_amount: amount, actual_amount: amount, effective_date: effectiveDate, status: "paid" as const, origin: "system" as const, account_id: paymentAccountId, card_id: cardId, card_invoice_id: invoice.id, updated_by: context.user.id };
+        const paymentResult = payment
+          ? await db.from("financial_entries").update(paymentValues).eq("id", payment.id).eq("family_id", context.family.id)
+          : await db.from("financial_entries").insert({ ...paymentValues, family_id: context.family.id, created_by: context.user.id, source_key: sourceKey });
+        if (paymentResult.error) throw paymentResult.error;
+        const { error: updateInvoiceError } = await db.from("card_invoices").update({ status: "paid", paid_amount: amount, payment_date: effectiveDate, payment_account_id: paymentAccountId, updated_by: context.user.id }).eq("id", invoice.id).eq("family_id", context.family.id);
+        if (updateInvoiceError) throw updateInvoiceError;
+      } else {
+        if (payment) {
+          const { error: paymentError } = await db.from("financial_entries").update({ actual_amount: null, effective_date: null, status: "planned", updated_by: context.user.id }).eq("id", payment.id).eq("family_id", context.family.id);
+          if (paymentError) throw paymentError;
+        }
+        const { error: updateInvoiceError } = await db.from("card_invoices").update({ status: invoice.closing_date ? "closed" : "open", paid_amount: null, payment_date: null, updated_by: context.user.id }).eq("id", invoice.id).eq("family_id", context.family.id);
+        if (updateInvoiceError) throw updateInvoiceError;
+      }
     }
   } catch (error) { actionFailure(error, context, "toggle_card_settlement", "overview", returnValues); }
   feedback("overview", "card_settlement_updated", returnValues);
@@ -502,7 +527,9 @@ export async function createRecurrence(formData: FormData) {
       description: textValue(formData.get("description"), true)!, entry_type: oneOf(formData.get("entry_type"), ENTRY_TYPES), expected_amount: moneyValue(formData.get("expected_amount"), true)!,
       frequency: textValue(formData.get("frequency"), true)!, interval_value: integerValue(formData.get("interval_value"), { min: 1, max: 120 }) ?? 1,
       day_of_month: integerValue(formData.get("day_of_month"), { min: 1, max: 31 }), start_date: dateValue(formData.get("start_date"), true)!, end_date: dateValue(formData.get("end_date")), next_occurrence: dateValue(formData.get("start_date"), true)!,
-      category_id: optionalId(formData, "category_id"), account_id: optionalId(formData, "account_id"), card_id: optionalId(formData, "card_id"), responsible_person_id: optionalId(formData, "responsible_person_id"), rule: {} }); if (error) throw error;
+      category_id: optionalId(formData, "category_id"), account_id: optionalId(formData, "account_id"), card_id: optionalId(formData, "card_id"), responsible_person_id: optionalId(formData, "responsible_person_id"),
+      rule: { classification_category_id: optionalId(formData, "classification_category_id") },
+    }); if (error) throw error;
   } catch (error) { actionFailure(error, context, "create_recurrence", "recurrences"); }
   feedback("recurrences", "created");
 }
@@ -567,7 +594,11 @@ export async function updateRecurrence(formData: FormData) {
   const context = await requireEditor();
   try {
     assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!;
-    const { data, error } = await createClient().from("recurrences").update({ description: textValue(formData.get("description"), true)!, entry_type: oneOf(formData.get("entry_type"), ENTRY_TYPES), expected_amount: moneyValue(formData.get("expected_amount"), true)!, frequency: textValue(formData.get("frequency"), true)!, interval_value: integerValue(formData.get("interval_value"), { min: 1, max: 120 }) ?? 1, day_of_month: integerValue(formData.get("day_of_month"), { min: 1, max: 31 }), start_date: dateValue(formData.get("start_date"), true)!, end_date: dateValue(formData.get("end_date")), next_occurrence: dateValue(formData.get("next_occurrence")), category_id: optionalId(formData, "category_id"), account_id: optionalId(formData, "account_id"), card_id: optionalId(formData, "card_id"), responsible_person_id: optionalId(formData, "responsible_person_id"), updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    const db = createClient();
+    const { data: existing, error: readError } = await db.from("recurrences").select("rule").eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+    if (readError || !existing) throw readError ?? new Error("not_found");
+    const existingRule = typeof existing.rule === "object" && existing.rule && !Array.isArray(existing.rule) ? existing.rule : {};
+    const { data, error } = await db.from("recurrences").update({ description: textValue(formData.get("description"), true)!, entry_type: oneOf(formData.get("entry_type"), ENTRY_TYPES), expected_amount: moneyValue(formData.get("expected_amount"), true)!, frequency: textValue(formData.get("frequency"), true)!, interval_value: integerValue(formData.get("interval_value"), { min: 1, max: 120 }) ?? 1, day_of_month: integerValue(formData.get("day_of_month"), { min: 1, max: 31 }), start_date: dateValue(formData.get("start_date"), true)!, end_date: dateValue(formData.get("end_date")), next_occurrence: dateValue(formData.get("next_occurrence")), category_id: optionalId(formData, "category_id"), account_id: optionalId(formData, "account_id"), card_id: optionalId(formData, "card_id"), responsible_person_id: optionalId(formData, "responsible_person_id"), rule: { ...existingRule, classification_category_id: optionalId(formData, "classification_category_id") }, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
     if (error || !data) throw error ?? new Error("not_found");
   } catch (error) { actionFailure(error, context, "update_recurrence", "recurrences"); }
   feedback("recurrences", "updated");
@@ -627,13 +658,14 @@ export async function endRecurrence(formData: FormData) {
 export async function generateRecurrenceOccurrences(formData: FormData) {
   const context = await requireEditor();
   try {
-    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const count = integerValue(formData.get("count"), { min: 1, max: 24, required: true })!; const db = createClient();
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const count = integerValue(formData.get("count"), { min: 1, max: 60, required: true })!; const db = createClient();
     const { data: rule, error } = await db.from("recurrences").select("*").eq("id", id).eq("family_id", context.family.id).eq("active", true).is("deleted_at", null).maybeSingle(); if (error || !rule) throw error ?? new Error("not_found");
     if (rule.frequency !== "monthly" || !rule.next_occurrence || !rule.entry_type || rule.expected_amount === null) throw new FinanceValidationError("invalid_recurrence");
-    const occurrences = generateMonthlyOccurrences({ recurrenceId: rule.id, startDate: rule.next_occurrence, count, endDate: rule.end_date });
-    const rows: FinancialEntryInsert[] = occurrences.map((occurrence) => ({ family_id: context.family.id, created_by: context.user.id, description: rule.description ?? "Lançamento recorrente", competence: `${occurrence.date.slice(0, 7)}-01`, entry_type: rule.entry_type!, cash_direction: ["income", "investment_redemption", "investment_yield"].includes(rule.entry_type!) ? "inflow" : "outflow", expected_amount: rule.expected_amount!, expected_date: occurrence.date, due_date: occurrence.date, status: rule.entry_type === "income" ? "receivable" : "payable", origin: "recurrence", purchase_kind: "recurring", recurrence_id: rule.id, category_id: rule.category_id, account_id: rule.account_id, card_id: rule.card_id, responsible_person_id: rule.responsible_person_id, source_key: occurrence.sourceKey }));
+    const occurrences = generateMonthlyOccurrences({ recurrenceId: rule.id, startDate: rule.next_occurrence, count, endDate: rule.end_date, intervalMonths: rule.interval_value });
+    const extras = typeof rule.rule === "object" && rule.rule && !Array.isArray(rule.rule) ? rule.rule as Record<string, unknown> : {};
+    const rows: FinancialEntryInsert[] = occurrences.map((occurrence) => ({ family_id: context.family.id, created_by: context.user.id, description: rule.description ?? "Lançamento recorrente", competence: `${occurrence.date.slice(0, 7)}-01`, entry_type: rule.entry_type!, cash_direction: ["income", "investment_redemption", "investment_yield"].includes(rule.entry_type!) ? "inflow" : "outflow", expected_amount: rule.expected_amount!, expected_date: occurrence.date, due_date: occurrence.date, status: rule.entry_type === "income" ? "receivable" : "payable", origin: "recurrence", purchase_kind: "recurring", recurrence_id: rule.id, category_id: rule.category_id, classification_category_id: typeof extras.classification_category_id === "string" ? extras.classification_category_id : null, account_id: rule.account_id, card_id: rule.card_id, responsible_person_id: rule.responsible_person_id, source_key: occurrence.sourceKey }));
     if (rows.length) { const { error: insertError } = await db.from("financial_entries").upsert(rows, { onConflict: "family_id,source_key", ignoreDuplicates: true }); if (insertError) throw insertError; }
-    const next = generateMonthlyOccurrences({ recurrenceId: rule.id, startDate: rule.next_occurrence, count: count + 1, endDate: rule.end_date }).at(-1)?.date ?? null;
+    const next = generateMonthlyOccurrences({ recurrenceId: rule.id, startDate: rule.next_occurrence, count: count + 1, endDate: rule.end_date, intervalMonths: rule.interval_value }).at(-1)?.date ?? null;
     const { error: updateError } = await db.from("recurrences").update({ next_occurrence: next, active: Boolean(next), updated_by: context.user.id }).eq("id", rule.id).eq("family_id", context.family.id); if (updateError) throw updateError;
   } catch (error) { actionFailure(error, context, "generate_recurrence", "recurrences"); }
   feedback("recurrences", "generated");
@@ -770,10 +802,19 @@ export async function closeInvoice(formData: FormData) {
 export async function payInvoice(formData: FormData) {
   const context = await requireEditor();
   try {
-    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const db = createClient(); const { data: invoice, error } = await db.from("card_invoices").select("id,card_id,competence,closed_amount,expected_amount,payment_account_id,status").eq("id", id).eq("family_id", context.family.id).maybeSingle(); if (error || !invoice) throw error ?? new Error("not_found"); if (invoice.status === "paid") throw new FinanceValidationError("already_paid");
-    const amount = moneyValue(formData.get("paid_amount")) ?? invoice.closed_amount ?? invoice.expected_amount; const account = optionalId(formData, "payment_account_id") ?? invoice.payment_account_id; if (!account) throw new FinanceValidationError("payment_account_required"); const date = dateValue(formData.get("payment_date"), true)!;
-    const { error: entryError } = await db.from("financial_entries").insert({ family_id: context.family.id, created_by: context.user.id, description: "Pagamento de fatura", competence: invoice.competence, entry_type: "transfer", cash_direction: "outflow", expected_amount: amount, actual_amount: amount, effective_date: date, status: "paid", origin: "system", account_id: account, card_id: invoice.card_id, card_invoice_id: invoice.id, source_key: `invoice-payment:${invoice.id}` }); if (entryError) throw entryError;
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const db = createClient(); const { data: invoice, error } = await db.from("card_invoices").select("id,card_id,competence,closed_amount,expected_amount,payment_account_id,status,credit_cards(payment_account_id)").eq("id", id).eq("family_id", context.family.id).maybeSingle(); if (error || !invoice) throw error ?? new Error("not_found"); if (invoice.status === "paid") throw new FinanceValidationError("already_paid");
+    const amount = moneyValue(formData.get("paid_amount")) ?? invoice.closed_amount ?? invoice.expected_amount; const account = optionalId(formData, "payment_account_id") ?? invoice.payment_account_id ?? invoice.credit_cards?.payment_account_id; if (!account) throw new FinanceValidationError("payment_account_required"); const date = dateValue(formData.get("payment_date"), true)!;
+    const sourceKey = `invoice-payment:${invoice.id}`;
+    const { data: existingPayment, error: paymentReadError } = await db.from("financial_entries").select("id").eq("family_id", context.family.id).eq("source_key", sourceKey).is("deleted_at", null).maybeSingle(); if (paymentReadError) throw paymentReadError;
+    const paymentValues = { description: "Pagamento de fatura", competence: invoice.competence, entry_type: "transfer" as const, cash_direction: "outflow" as const, expected_amount: amount, actual_amount: amount, effective_date: date, status: "paid" as const, origin: "system" as const, account_id: account, card_id: invoice.card_id, card_invoice_id: invoice.id, updated_by: context.user.id };
+    const paymentResult = existingPayment ? await db.from("financial_entries").update(paymentValues).eq("id", existingPayment.id).eq("family_id", context.family.id) : await db.from("financial_entries").insert({ ...paymentValues, family_id: context.family.id, created_by: context.user.id, source_key: sourceKey }); if (paymentResult.error) throw paymentResult.error;
     const { error: updateError } = await db.from("card_invoices").update({ status: "paid", paid_amount: amount, payment_date: date, payment_account_id: account, updated_by: context.user.id }).eq("id", invoice.id).eq("family_id", context.family.id); if (updateError) throw updateError;
+    const { data: invoiceEntries, error: entriesReadError } = await db.from("financial_entries").select("id,expected_amount,source_key").eq("family_id", context.family.id).eq("card_id", invoice.card_id).eq("competence", invoice.competence).eq("entry_type", "expense").is("deleted_at", null).neq("status", "cancelled"); if (entriesReadError) throw entriesReadError;
+    const payableEntries = (invoiceEntries ?? []).filter((entry) => !entry.source_key?.startsWith("card-balance:"));
+    for (let index = 0; index < payableEntries.length; index += 8) {
+      const updates = await Promise.all(payableEntries.slice(index, index + 8).map((entry) => db.from("financial_entries").update({ actual_amount: entry.expected_amount, effective_date: date, status: "paid", updated_by: context.user.id }).eq("id", entry.id).eq("family_id", context.family.id)));
+      const failed = updates.find((result) => result.error); if (failed?.error) throw failed.error;
+    }
   } catch (error) { actionFailure(error, context, "pay_invoice", "invoices"); }
   feedback("invoices", "paid");
 }
@@ -790,6 +831,7 @@ export async function reverseInvoicePayment(formData: FormData) {
     const { error: reversalError } = await db.from("financial_entries").insert({ family_id: context.family.id, created_by: context.user.id, description: "Estorno de pagamento de fatura", competence: invoice.competence, entry_type: "transfer", cash_direction: "inflow", expected_amount: amount, actual_amount: amount, effective_date: date, status: "received", origin: "system", account_id: payment.account_id, card_id: invoice.card_id, card_invoice_id: invoice.id, reversal_of_entry_id: payment.id, source_key: `invoice-payment-reversal:${invoice.id}` });
     if (reversalError) throw reversalError;
     const { error: updateError } = await db.from("card_invoices").update({ status: "closed", paid_amount: null, payment_date: null, updated_by: context.user.id }).eq("id", invoice.id).eq("family_id", context.family.id); if (updateError) throw updateError;
+    const { error: entriesError } = await db.from("financial_entries").update({ actual_amount: null, effective_date: null, status: "payable", updated_by: context.user.id }).eq("family_id", context.family.id).eq("card_id", invoice.card_id).eq("competence", invoice.competence).eq("entry_type", "expense").is("deleted_at", null).neq("status", "cancelled"); if (entriesError) throw entriesError;
   } catch (error) { actionFailure(error, context, "reverse_invoice_payment", "invoices"); }
   feedback("invoices", "reversed");
 }

@@ -25,6 +25,16 @@ export function Options({ rows, placeholder }: { rows: Array<{ id: string; label
   return <><option value="">{placeholder}</option>{rows.map((row) => <option key={row.id} value={row.id}>{row.label}</option>)}</>;
 }
 
+export function FieldLabel({ label, help, children, className = "" }: { label: string; help: string; children: ReactNode; className?: string }) {
+  return <label className={`text-xs font-medium text-slate-600 ${className}`}>
+    <span className="mb-1 flex items-center gap-1.5">
+      <span>{label}</span>
+      <span tabIndex={0} role="img" aria-label={`Informação sobre ${label}: ${help}`} title={help} className="inline-grid h-4 w-4 cursor-help place-items-center rounded-full border border-sky-300 bg-sky-50 text-[10px] font-bold text-sky-700">i</span>
+    </span>
+    {children}
+  </label>;
+}
+
 export function FormPanel({ title, children, open = false }: { title: string; children: ReactNode; open?: boolean }) {
   return <details open={open} className={`${panel} group`}><summary className="flex cursor-pointer list-none items-center justify-between gap-3 font-semibold text-slate-900"><span>{title}</span><span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-full bg-sky-100 text-sky-700 transition group-open:rotate-45">+</span></summary><div className="mt-5">{children}</div></details>;
 }

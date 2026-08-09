@@ -167,12 +167,17 @@ export function generateMonthlyOccurrences(input: {
   startDate: string;
   count: number;
   endDate?: string | null;
+  intervalMonths?: number;
 }) {
   if (!Number.isSafeInteger(input.count) || input.count < 0) {
     throw new Error("invalid recurrence count");
   }
+  const intervalMonths = input.intervalMonths ?? 1;
+  if (!Number.isSafeInteger(intervalMonths) || intervalMonths < 1) {
+    throw new Error("invalid recurrence interval");
+  }
   return Array.from({ length: input.count }, (_, index) => {
-    const date = addMonths(input.startDate, index);
+    const date = addMonths(input.startDate, index * intervalMonths);
     return { date, sourceKey: `recurrence:${input.recurrenceId}:${date}` };
   }).filter((occurrence) => !input.endDate || occurrence.date <= input.endDate);
 }
