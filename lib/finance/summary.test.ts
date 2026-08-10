@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, installmentProgressLabel, isCardCategoryName, monthlyEntryAmount, pendingEntriesTotal, placeCardCategoriesLast, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import { accumulateProjectedBalance, cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, installmentProgressLabel, isCardCategoryName, monthlyEntryAmount, pendingEntriesTotal, placeCardCategoriesLast, projectedBalance, projectedBalanceFromStart, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { FinancialEntryRow } from "@/lib/finance/types";
 
 function entry(overrides: Partial<FinancialEntryRow> = {}) {
@@ -58,6 +58,52 @@ describe("resumo financeiro mensal", () => {
 
     expect(cashflowEntriesForBalance(rows, "2026-08-01", "2026-08-01").map((item) => item.id)).toEqual(["august"]);
     expect(cashflowEntriesForBalance(rows, "2026-09-01", "2026-08-01").map((item) => item.id)).toEqual(["august", "september"]);
+  });
+
+  it("acumula o saldo projetado dos meses anteriores", () => {
+    const rows = [
+      entry({ id: "august", competence: "2026-08-01", expected_amount: 1000 }),
+      ...Array.from({ length: 10 }, (_, index) => entry({
+        id: `income-${index}`,
+        competence: new Date(Date.UTC(2026, 9 + index, 1)).toISOString().slice(0, 10),
+        entry_type: "income",
+        cash_direction: "inflow",
+        expected_amount: 4000,
+      })),
+    ];
+
+    expect(accumulateProjectedBalance(-1000, rows.slice(1))).toBe(39000);
+  });
+
+  it("combina caixa realizado e somente a diferença ainda projetada", () => {
+    const rows = [
+      entry({ entry_type: "income", cash_direction: "inflow", expected_amount: 100, actual_amount: 80 }),
+      entry({ entry_type: "expense", cash_direction: "outflow", expected_amount: 50, actual_amount: 50 }),
+      entry({ entry_type: "transfer", cash_direction: "inflow", expected_amount: 25, actual_amount: 25 }),
+      entry({ entry_type: "transfer", cash_direction: "outflow", expected_amount: 25, actual_amount: 25 }),
+    ];
+
+    expect(projectedBalance(1000, rows, rows)).toBe(1050);
+  });
+
+  it("preserva a largada sem incorporar pendências de meses anteriores", () => {
+    const historicalPending = entry({ competence: "2026-07-01", expected_amount: 500, cash_direction: "outflow" });
+    const august = entry({ competence: "2026-08-01", expected_amount: 1000, cash_direction: "outflow" });
+
+    expect(projectedBalance(0, [historicalPending, august], [august])).toBe(-1000);
+  });
+
+  it("zera julho, preserva agosto e acumula somente os meses posteriores", () => {
+    const octoberToJuly = Array.from({ length: 10 }, (_, index) => entry({
+      competence: new Date(Date.UTC(2026, 9 + index, 1)).toISOString().slice(0, 10),
+      entry_type: "income",
+      cash_direction: "inflow",
+      expected_amount: 4000,
+    }));
+
+    expect(projectedBalanceFromStart("2026-07-01", "2026-08-01", 999)).toBe(0);
+    expect(projectedBalanceFromStart("2026-08-01", "2026-08-01", -1000)).toBe(-1000);
+    expect(projectedBalanceFromStart("2027-07-01", "2026-08-01", 999, -1000, octoberToJuly)).toBe(39000);
   });
 
   it("soma somente lançamentos marcados como recebidos ou pagos", () => {

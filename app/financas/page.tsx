@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { MainNav } from "@/app/components/main-nav";
 import { FinanceNav } from "@/app/financas/finance-nav";
@@ -10,6 +11,7 @@ import { RecurrencesView, type RecurrenceFilters } from "@/app/financas/views/re
 import { getActionErrorMessage } from "@/lib/action-feedback";
 import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
 import { currentCompetence, ensureFinanceRecurrences, getFinanceWorkspace, getFinancialEntryPage } from "@/lib/finance/services";
+import { addCompetenceMonths } from "@/lib/finance/recurrence";
 import type { FinanceFilters, FinanceView } from "@/lib/finance/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -67,11 +69,13 @@ export default async function FinancasPage({ searchParams }: PageProps) {
   const canAdmin = canAdminFamily(context);
   const incomeOrder = validMonthlyOrder(valueOf(searchParams, "income_order"));
   const expenseOrder = validMonthlyOrder(valueOf(searchParams, "expense_order"));
+  const previousCompetence = addCompetenceMonths(competence, -1).slice(0, 7);
+  const nextCompetence = addCompetenceMonths(competence, 1).slice(0, 7);
   const success = valueOf(searchParams, "success");
   const error = valueOf(searchParams, "error");
 
   return <main className="min-h-screen bg-slate-50 p-3 sm:p-5 lg:p-8"><div className="mx-auto max-w-7xl space-y-5">
-    <header className="overflow-hidden rounded-3xl bg-white shadow-sm"><div className="bg-gradient-to-r from-slate-950 via-slate-900 to-sky-900 p-5 text-white sm:p-7"><MainNav current="financas"/><div className="mt-7 flex flex-col gap-4 md:flex-row md:items-end md:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[.2em] text-sky-300">HERO.FamilyOS · Controle familiar</p><h1 className="mt-2 text-2xl font-semibold sm:text-3xl">Finanças e patrimônio</h1><p className="mt-1 text-sm text-slate-300">{context.family.name} · previsto e realizado em ledger único</p></div><form className="flex flex-col gap-2 min-[420px]:flex-row"><input type="hidden" name="view" value={view}/><input type="month" name="competence" defaultValue={competence.slice(0, 7)} aria-label="Competência" className="rounded-xl border border-white/20 bg-white/10 px-3 py-2.5 text-sm text-white [color-scheme:dark]"/><button className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-900">Aplicar</button></form></div></div><div className="p-4"><FinanceNav current={view} competence={competence}/></div></header>
+    <header className="overflow-hidden rounded-3xl bg-white shadow-sm"><div className="bg-gradient-to-r from-slate-950 via-slate-900 to-sky-900 p-5 text-white sm:p-7"><MainNav current="financas"/><div className="mt-7 flex flex-col gap-4 md:flex-row md:items-end md:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[.2em] text-sky-300">HERO.FamilyOS · Controle familiar</p><h1 className="mt-2 text-2xl font-semibold sm:text-3xl">Finanças e patrimônio</h1><p className="mt-1 text-sm text-slate-300">{context.family.name} · previsto e realizado em ledger único</p></div><div className="flex items-center gap-2">{view === "overview" && <Link href={`/financas?view=overview&competence=${previousCompetence}&income_order=${incomeOrder}&expense_order=${expenseOrder}`} aria-label="Visualizar mês anterior" title="Mês anterior" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/20 bg-white/10 text-xl font-bold text-white transition hover:bg-white/20">←</Link>}<form className="flex flex-col gap-2 min-[420px]:flex-row"><input type="hidden" name="view" value={view}/><input type="month" name="competence" defaultValue={competence.slice(0, 7)} aria-label="Competência" className="rounded-xl border border-white/20 bg-white/10 px-3 py-2.5 text-sm text-white [color-scheme:dark]"/><button className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-900">Aplicar</button></form>{view === "overview" && <Link href={`/financas?view=overview&competence=${nextCompetence}&income_order=${incomeOrder}&expense_order=${expenseOrder}`} aria-label="Visualizar próximo mês" title="Próximo mês" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/20 bg-white/10 text-xl font-bold text-white transition hover:bg-white/20">→</Link>}</div></div></div><div className="p-4"><FinanceNav current={view} competence={competence}/></div></header>
     {(success || error) && <div role="status" aria-live="polite" className={`rounded-2xl border p-4 ${error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{error ? getActionErrorMessage(error, valueOf(searchParams, "request_id")) : "Operação concluída com sucesso."}</div>}
     {view === "overview" && <DashboardView workspace={workspace} competence={competence} incomeOrder={incomeOrder} expenseOrder={expenseOrder} canEdit={canEdit} canAdmin={canAdmin}/>}
     {view === "movements" && <MovementsView workspace={workspace} page={movementPage} filters={filters} params={searchParams} canEdit={canEdit} canAdmin={canAdmin}/>}
