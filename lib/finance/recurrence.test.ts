@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCompetenceMonths, dayBeforeCompetence, monthlyOccurrenceDates, recurrenceActivationPatch, recurrenceOccurrenceId, recurrenceRangesFromEntries, sortRecurrencesForEditing } from "@/lib/finance/recurrence";
+import { addCompetenceMonths, dayBeforeCompetence, monthlyOccurrenceDates, recurrenceActivationPatch, recurrenceEntryPropagationPatch, recurrenceOccurrenceId, recurrenceRangesFromEntries, sortRecurrencesForEditing } from "@/lib/finance/recurrence";
 import type { FinancialEntryRow } from "@/lib/finance/types";
 import type { Recurrence } from "@/lib/finance/types";
 
@@ -76,5 +76,37 @@ describe("recorrências financeiras contínuas", () => {
       next_occurrence: "2026-08-10",
     });
     expect(recurrenceActivationPatch(false, "2026-08-10")).toEqual({ active: false });
+  });
+
+  it("limpa o vínculo da fatura quando a propagação troca o cartão", () => {
+    expect(recurrenceEntryPropagationPatch({
+      description: "Condomínio CenterV",
+      entryType: "expense",
+      expectedAmount: 648.65,
+      categoryId: "condominio",
+      classificationCategoryId: "condominio",
+      accountId: null,
+      cardId: null,
+      responsiblePersonId: "responsavel",
+      cardChanged: true,
+    })).toMatchObject({
+      card_id: null,
+      card_invoice_id: null,
+      cash_direction: "outflow",
+    });
+  });
+
+  it("preserva o vínculo da fatura quando o cartão não muda", () => {
+    expect(recurrenceEntryPropagationPatch({
+      description: "Anuidade",
+      entryType: "expense",
+      expectedAmount: 54,
+      categoryId: "cartao",
+      classificationCategoryId: null,
+      accountId: null,
+      cardId: "card-1",
+      responsiblePersonId: null,
+      cardChanged: false,
+    })).not.toHaveProperty("card_invoice_id");
   });
 });

@@ -8,7 +8,7 @@ import { reportActionError } from "@/lib/action-error";
 import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
 import { findCardCategoryId } from "@/lib/finance/card-category";
 import { generateMonthlyOccurrences, splitInstallments } from "@/lib/finance/domain";
-import { dayBeforeCompetence, recurrenceActivationPatch } from "@/lib/finance/recurrence";
+import { dayBeforeCompetence, recurrenceActivationPatch, recurrenceEntryPropagationPatch } from "@/lib/finance/recurrence";
 import { assertNoClientFamilyId, CATEGORY_TYPES, competenceValue, dateValue, ENTRY_STATUSES, ENTRY_TYPES, FinanceValidationError, integerValue, moneyValue, oneOf, optionalId, textValue, validatePercentage } from "@/lib/finance/validation";
 import { createClient } from "@/lib/supabase/server";
 import type { FinancialEntryInsert } from "@/lib/finance/types";
@@ -585,11 +585,81 @@ export async function updateRecurrence(formData: FormData) {
   try {
     assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!;
     const db = createClient();
-    const { data: existing, error: readError } = await db.from("recurrences").select("rule").eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+    const { data: existing, error: readError } = await db.from("recurrences").select("description,entry_type,expected_amount,frequency,interval_value,day_of_month,start_date,end_date,next_occurrence,category_id,account_id,card_id,responsible_person_id,rule").eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
     if (readError || !existing) throw readError ?? new Error("not_found");
     const existingRule = typeof existing.rule === "object" && existing.rule && !Array.isArray(existing.rule) ? existing.rule : {};
-    const { data, error } = await db.from("recurrences").update({ description: textValue(formData.get("description"), true)!, entry_type: oneOf(formData.get("entry_type"), ENTRY_TYPES), expected_amount: moneyValue(formData.get("expected_amount"), true)!, frequency: textValue(formData.get("frequency"), true)!, interval_value: integerValue(formData.get("interval_value"), { min: 1, max: 120 }) ?? 1, day_of_month: integerValue(formData.get("day_of_month"), { min: 1, max: 31 }), start_date: dateValue(formData.get("start_date"), true)!, end_date: dateValue(formData.get("end_date")), next_occurrence: dateValue(formData.get("next_occurrence")), category_id: optionalId(formData, "category_id"), account_id: optionalId(formData, "account_id"), card_id: optionalId(formData, "card_id"), responsible_person_id: optionalId(formData, "responsible_person_id"), rule: { ...existingRule, classification_category_id: optionalId(formData, "classification_category_id") }, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    const description = textValue(formData.get("description"), true)!;
+    const entryType = oneOf(formData.get("entry_type"), ["income", "expense"] as const);
+    const expectedAmount = moneyValue(formData.get("expected_amount"), true)!;
+    const categoryId = optionalId(formData, "category_id");
+    const classificationCategoryId = optionalId(formData, "classification_category_id");
+    const accountId = optionalId(formData, "account_id");
+    const cardId = optionalId(formData, "card_id");
+    const responsiblePersonId = optionalId(formData, "responsible_person_id");
+    const recurrencePatch = {
+      description,
+      entry_type: entryType,
+      expected_amount: expectedAmount,
+      frequency: textValue(formData.get("frequency"), true)!,
+      interval_value: integerValue(formData.get("interval_value"), { min: 1, max: 120 }) ?? 1,
+      day_of_month: integerValue(formData.get("day_of_month"), { min: 1, max: 31 }),
+      start_date: dateValue(formData.get("start_date"), true)!,
+      end_date: dateValue(formData.get("end_date")),
+      next_occurrence: dateValue(formData.get("next_occurrence")),
+      category_id: categoryId,
+      account_id: accountId,
+      card_id: cardId,
+      responsible_person_id: responsiblePersonId,
+      rule: { ...existingRule, classification_category_id: classificationCategoryId },
+      updated_by: context.user.id,
+    };
+    const { data, error } = await db.from("recurrences").update(recurrencePatch).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
     if (error || !data) throw error ?? new Error("not_found");
+
+    if (formData.get("apply_to_future_unpaid") === "true") {
+      const fromCompetence = competenceValue(formData.get("apply_from_competence"));
+      const entryPatch = {
+        ...recurrenceEntryPropagationPatch({
+          description,
+          entryType,
+          expectedAmount,
+          categoryId,
+          classificationCategoryId,
+          accountId,
+          cardId,
+          responsiblePersonId,
+          cardChanged: existing.card_id !== cardId,
+        }),
+        updated_by: context.user.id,
+      };
+      const { error: propagationError } = await db.from("financial_entries").update(entryPatch)
+        .eq("family_id", context.family.id)
+        .eq("recurrence_id", id)
+        .gte("competence", fromCompetence)
+        .is("deleted_at", null)
+        .is("actual_amount", null)
+        .not("status", "in", '("cancelled","reversed","paid","received")');
+      if (propagationError) {
+        await db.from("recurrences").update({
+          description: existing.description,
+          entry_type: existing.entry_type,
+          expected_amount: existing.expected_amount,
+          frequency: existing.frequency,
+          interval_value: existing.interval_value,
+          day_of_month: existing.day_of_month,
+          start_date: existing.start_date,
+          end_date: existing.end_date,
+          next_occurrence: existing.next_occurrence,
+          category_id: existing.category_id,
+          account_id: existing.account_id,
+          card_id: existing.card_id,
+          responsible_person_id: existing.responsible_person_id,
+          rule: existing.rule,
+          updated_by: context.user.id,
+        }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null);
+        throw propagationError;
+      }
+    }
   } catch (error) { actionFailure(error, context, "update_recurrence", "recurrences"); }
   feedback("recurrences", "updated");
 }

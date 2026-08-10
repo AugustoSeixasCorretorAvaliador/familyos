@@ -8,6 +8,33 @@ export type MonthlyRecurrenceWindow = {
   dayOfMonth?: number | null;
 };
 
+export type RecurrenceEntryPropagationValues = {
+  description: string;
+  entryType: "income" | "expense";
+  expectedAmount: number;
+  categoryId: string | null;
+  classificationCategoryId: string | null;
+  accountId: string | null;
+  cardId: string | null;
+  responsiblePersonId: string | null;
+  cardChanged: boolean;
+};
+
+export function recurrenceEntryPropagationPatch(values: RecurrenceEntryPropagationValues) {
+  return {
+    description: values.description,
+    entry_type: values.entryType,
+    cash_direction: values.entryType === "income" ? "inflow" : "outflow",
+    expected_amount: values.expectedAmount,
+    category_id: values.categoryId,
+    classification_category_id: values.classificationCategoryId,
+    account_id: values.accountId,
+    card_id: values.cardId,
+    responsible_person_id: values.responsiblePersonId,
+    ...(values.cardChanged ? { card_invoice_id: null } : {}),
+  };
+}
+
 function recurrenceTypeOrder(recurrence: Recurrence) {
   return recurrence.entry_type === "income" ? 0 : 1;
 }
