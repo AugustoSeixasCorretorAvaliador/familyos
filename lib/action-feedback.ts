@@ -6,6 +6,7 @@ export type ActionErrorCode =
   | "unsupported_file_type"
   | "too_many_files"
   | "multiple_files_require_archive"
+  | "invalid_amount"
   | "permission_denied"
   | "schema_missing"
   | "schema_mismatch"
@@ -38,6 +39,7 @@ const ERROR_MESSAGES: Record<ActionErrorCode, string> = {
   too_many_files: "Selecione no maximo 10 arquivos por envio.",
   multiple_files_require_archive:
     "Para enviar varios arquivos de uma vez, marque Somente arquivar no historico.",
+  invalid_amount: "Informe um valor monetario valido, com no maximo duas casas decimais.",
   permission_denied: "A politica de seguranca nao permite esta operacao para o seu perfil.",
   schema_missing: "O modulo ainda nao foi aplicado ao banco de dados.",
   schema_mismatch: "A estrutura do modulo esta divergente do banco de dados.",

@@ -4,6 +4,8 @@ import { assertNoClientFamilyId, competenceValue, dateValue, FinanceValidationEr
 describe("finance validation", () => {
   it("aceita moeda brasileira sem perder centavos", () => {
     expect(moneyValue("1.234,56", true)).toBe(1234.56);
+    expect(moneyValue("8533.22", true)).toBe(8533.22);
+    expect(moneyValue("9.181,87", true)).toBe(9181.87);
   });
 
   it("rejeita valor negativo ou com precisão inválida", () => {

@@ -16,8 +16,11 @@ export function moneyValue(value: FormDataEntryValue | null, required = false) {
   const raw = textValue(value, required);
   if (raw === null) return null;
   const normalized = raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw;
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
+    throw new FinanceValidationError("invalid_amount");
+  }
   const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed < 0 || Math.round(parsed * 100) !== parsed * 100) {
+  if (!Number.isFinite(parsed) || parsed < 0) {
     throw new FinanceValidationError("invalid_amount");
   }
   return parsed;
