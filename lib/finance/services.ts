@@ -4,7 +4,7 @@ export { commitFinanceImportArchive, previewFinanceImportArchive } from "@/lib/f
 export type { FinanceImportCommitResult, FinanceImportPreview, ImportPreviewCount } from "@/lib/finance/import-service";
 
 import { createClient } from "@/lib/supabase/server";
-import { decodeEntryCursor, encodeEntryCursor } from "@/lib/finance/pagination";
+import { collectCursorPages, decodeEntryCursor, encodeEntryCursor } from "@/lib/finance/pagination";
 import { addCompetenceMonths, monthlyOccurrenceDates, recurrenceOccurrenceId } from "@/lib/finance/recurrence";
 import { cashflowEntriesForBalance, effectiveCashflowEntries, monthlyEntryAmount, projectedBalance, projectedBalanceFromStart } from "@/lib/finance/summary";
 import type { DashboardMetrics, FinanceFilters, FinanceWorkspace, FinancialEntryInsert, FinancialEntryPage, FinancialEntryRow } from "@/lib/finance/types";
@@ -138,12 +138,19 @@ export async function ensureFinanceRecurrences(familyId: string, userId: string,
 
   const recurrenceIds = valid.map((rule) => rule.id);
   const earliestStart = valid.map((rule) => rule.start_date).sort()[0];
-  const { data: existing, error: existingError } = await db.from("financial_entries")
-    .select("recurrence_id,competence")
-    .eq("family_id", familyId)
-    .in("recurrence_id", recurrenceIds)
-    .gte("competence", `${earliestStart.slice(0, 7)}-01`);
-  throwIfError(existingError, "ensure_recurrence_entries");
+  const existing = await collectCursorPages(async (after, limit) => {
+    let query = db.from("financial_entries")
+      .select("id,recurrence_id,competence")
+      .eq("family_id", familyId)
+      .in("recurrence_id", recurrenceIds)
+      .gte("competence", `${earliestStart.slice(0, 7)}-01`)
+      .order("id")
+      .limit(limit);
+    if (after) query = query.gt("id", after);
+    const { data, error } = await query;
+    throwIfError(error, "ensure_recurrence_entries");
+    return data ?? [];
+  }, (entry) => entry.id);
   // Ocorrências arquivadas também ocupam a competência: recriá-las desfaria
   // silenciosamente uma decisão explícita do usuário.
   const existingMonths = new Set((existing ?? []).map((entry) => `${entry.recurrence_id}:${entry.competence}`));

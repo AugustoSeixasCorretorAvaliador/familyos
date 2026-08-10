@@ -25,3 +25,23 @@ export function previousCursorTrail(trail?: string) {
   items.pop();
   return { trail: items.join("~"), cursor: items.at(-1) ?? null };
 }
+
+export async function collectCursorPages<Row>(
+  fetchPage: (after: string | null, limit: number) => Promise<Row[]>,
+  cursorOf: (row: Row) => string,
+  pageSize = 500
+) {
+  if (!Number.isInteger(pageSize) || pageSize < 1) throw new Error("invalid_page_size");
+
+  const rows: Row[] = [];
+  let after: string | null = null;
+  while (true) {
+    const page = await fetchPage(after, pageSize);
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+
+    const next = cursorOf(page[page.length - 1]);
+    if (!next || next === after) throw new Error("invalid_page_cursor");
+    after = next;
+  }
+}
