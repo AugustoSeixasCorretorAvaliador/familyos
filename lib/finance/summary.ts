@@ -1,4 +1,4 @@
-import type { FinancialEntryRow } from "@/lib/finance/types";
+import type { CardInvoice, FinancialEntryRow } from "@/lib/finance/types";
 
 export function monthlyEntryAmount(entry: FinancialEntryRow) {
   const amount = entry.actual_amount ?? entry.expected_amount;
@@ -89,9 +89,35 @@ export function cashflowEntriesForMonth(entries: FinancialEntryRow[], competence
 
 export function cashflowEntriesForBalance(entries: FinancialEntryRow[], competence: string, openingBalanceDate: string | null) {
   const openingCompetence = openingBalanceDate ? `${openingBalanceDate.slice(0, 7)}-01` : null;
+  const effectiveEntries = effectiveCashflowEntries(entries);
+  const paidCardMonths = new Set(effectiveEntries
+    .filter((entry) => entry.card_id && entry.actual_amount !== null && entry.source_key?.startsWith("invoice-payment:"))
+    .map((entry) => `${entry.competence}:${entry.card_id}`));
+
+  return effectiveEntries.filter((entry) => {
+    if (entry.competence > competence || (openingCompetence && entry.competence < openingCompetence)) return false;
+    const paidByInvoice = entry.card_id
+      && ["expense", "reversal"].includes(entry.entry_type)
+      && paidCardMonths.has(`${entry.competence}:${entry.card_id}`);
+    return !paidByInvoice;
+  });
+}
+
+export function invoiceEntriesForCard(entries: FinancialEntryRow[], cardId: string, competence: string) {
   return effectiveCashflowEntries(entries).filter((entry) =>
-    entry.competence <= competence && (!openingCompetence || entry.competence >= openingCompetence)
+    entry.card_id === cardId
+    && entry.competence === competence
+    && ["expense", "reversal"].includes(entry.entry_type)
   );
+}
+
+export function invoiceExpectedAmount(entries: FinancialEntryRow[], fallback: number) {
+  return entries.length ? Math.max(0, expectedEntriesTotal(entries)) : fallback;
+}
+
+export function invoiceDisplayAmount(invoice: CardInvoice, calculatedExpected: number) {
+  if (invoice.status === "paid") return invoice.paid_amount ?? invoice.closed_amount ?? calculatedExpected;
+  return invoice.closed_amount ?? calculatedExpected;
 }
 
 export function projectedBalance(openingBalance: number, cashEntries: FinancialEntryRow[], projectionEntries: FinancialEntryRow[]) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { accumulateProjectedBalance, cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, installmentProgressLabel, isCardCategoryName, monthlyEntryAmount, pendingEntriesTotal, placeCardCategoriesLast, projectedBalance, projectedBalanceFromStart, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
-import type { FinancialEntryRow } from "@/lib/finance/types";
+import { accumulateProjectedBalance, cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, installmentProgressLabel, invoiceDisplayAmount, invoiceEntriesForCard, invoiceExpectedAmount, isCardCategoryName, monthlyEntryAmount, pendingEntriesTotal, placeCardCategoriesLast, projectedBalance, projectedBalanceFromStart, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import type { CardInvoice, FinancialEntryRow } from "@/lib/finance/types";
 
 function entry(overrides: Partial<FinancialEntryRow> = {}) {
   return {
@@ -58,6 +58,31 @@ describe("resumo financeiro mensal", () => {
 
     expect(cashflowEntriesForBalance(rows, "2026-08-01", "2026-08-01").map((item) => item.id)).toEqual(["august"]);
     expect(cashflowEntriesForBalance(rows, "2026-09-01", "2026-08-01").map((item) => item.id)).toEqual(["august", "september"]);
+  });
+
+  it("substitui compras do cartão pela saída única do pagamento da fatura no saldo", () => {
+    const rows = [
+      entry({ id: "purchase-a", card_id: "card-1", expected_amount: 54, actual_amount: 54, cash_direction: "outflow" }),
+      entry({ id: "purchase-b", card_id: "card-1", expected_amount: 430.68, actual_amount: 430.68, cash_direction: "none" }),
+      entry({ id: "payment", card_id: "card-1", entry_type: "transfer", expected_amount: 484.68, actual_amount: 484.68, cash_direction: "outflow", source_key: "invoice-payment:invoice-1" }),
+    ];
+
+    expect(cashflowEntriesForBalance(rows.slice(0, 2), "2026-08-01", "2026-08-01").map((item) => item.id)).toEqual(["purchase-a", "purchase-b"]);
+    expect(cashflowEntriesForBalance(rows, "2026-08-01", "2026-08-01").map((item) => item.id)).toEqual(["payment"]);
+  });
+
+  it("calcula e exibe a fatura pelos lançamentos atuais e pelo valor efetivamente pago", () => {
+    const rows = [
+      entry({ id: "annual-fee", card_id: "card-1", expected_amount: 54 }),
+      entry({ id: "insurance-a", card_id: "card-1", expected_amount: 162.36 }),
+      entry({ id: "insurance-b", card_id: "card-1", expected_amount: 268.32 }),
+      entry({ id: "other-card", card_id: "card-2", expected_amount: 100 }),
+    ];
+    const invoice = { status: "paid", expected_amount: 609.65, closed_amount: 609.65, paid_amount: 484.68 } as CardInvoice;
+    const invoiceEntries = invoiceEntriesForCard(rows, "card-1", "2026-08-01");
+
+    expect(invoiceExpectedAmount(invoiceEntries, invoice.expected_amount)).toBe(484.68);
+    expect(invoiceDisplayAmount(invoice, 484.68)).toBe(484.68);
   });
 
   it("acumula o saldo projetado dos meses anteriores", () => {
