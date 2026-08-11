@@ -40,4 +40,39 @@ describe("selectExecutiveTools", () => {
       "get_dashboard",
     ]);
   });
+
+  it("roteia análises financeiras para o panorama determinístico", () => {
+    expect(selectExecutiveTools("Quais despesas mais cresceram neste mês?")).toEqual([
+      "get_financial_overview",
+    ]);
+  });
+
+  it("combina contas e fluxo para perguntas de saldo", () => {
+    expect(selectExecutiveTools("Quanto dinheiro disponível temos nas contas?")).toEqual([
+      "list_financial_accounts",
+      "get_financial_summary",
+      "get_financial_overview",
+    ]);
+  });
+
+  it("consulta reajustes de aluguel e imóveis", () => {
+    expect(selectExecutiveTools("Quais aluguéis precisam de reajuste?")).toEqual([
+      "list_properties",
+      "get_rent_adjustment_alerts",
+    ]);
+  });
+
+  it("combina patrimônio, investimentos e imóveis", () => {
+    expect(selectExecutiveTools("Qual é o patrimônio líquido total conhecido?")).toEqual([
+      "get_net_worth_summary",
+    ]);
+  });
+
+  it("usa o RX integrado para o retrato financeiro e patrimonial do dia", () => {
+    expect(
+      selectExecutiveTools(
+        "Faça um RX financeiro e patrimonial de hoje dentro do mês atual."
+      )
+    ).toEqual(["get_daily_integrated_snapshot"]);
+  });
 });

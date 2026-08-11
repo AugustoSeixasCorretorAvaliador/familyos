@@ -2,10 +2,25 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { getGoogleCalendarUpcomingEvents } from "@/lib/calendar/status";
 import { redactSensitiveText, toDateOnly } from "@/lib/ai/tools/privacy";
 import {
+  addCompetenceMonths,
+  buildFinancialExecutiveOverview,
+  competenceFromDate,
+  summarizeInvestmentPortfolio,
+  summarizeRentAdjustments,
+} from "@/lib/ai/tools/financial-analysis";
+import {
   buildPropertyExecutiveRecord,
   summarizePropertyPortfolio,
   type PropertyExecutiveRecord,
 } from "@/lib/ai/tools/properties";
+import type {
+  Account,
+  Category,
+  FinancialEntryRow,
+  InvestmentAsset,
+  InvestmentPosition,
+  LeaseContract,
+} from "@/lib/finance/types";
 import type {
   ExecutiveToolContext,
   ExecutiveToolResult,
@@ -162,7 +177,7 @@ export async function listFinancialAccounts(
 ): Promise<ExecutiveToolResult> {
   const query = await context.supabase
     .from("accounts")
-    .select("institution, account_type, metadata")
+    .select("institution, account_type, currency, opening_balance, opening_balance_date, metadata")
     .eq("family_id", context.familyId)
     .is("deleted_at", null)
     .order("institution", { ascending: true })
@@ -177,9 +192,12 @@ export async function listFinancialAccounts(
     return {
       institution: redactSensitiveText(row.institution, 120),
       accountType: redactSensitiveText(row.account_type, 80),
-      currency: "BRL",
-      balance: finiteNumber(metadata.saldo_atual),
+      currency: redactSensitiveText(row.currency, 8) || "BRL",
+      balance: finiteNumber(metadata.saldo_atual) ?? finiteNumber(row.opening_balance),
+      balanceBasis: finiteNumber(metadata.saldo_atual) !== null ? "saldo_informado" : "saldo_inicial",
       balanceUpdatedAt: metadata.data_atualizacao ?? null,
+      openingBalance: finiteNumber(row.opening_balance),
+      openingBalanceDate: row.opening_balance_date ?? null,
     };
   });
   return result(context, { count: items.length, items });
@@ -192,24 +210,342 @@ export async function getFinancialSummary(
   if (!accounts.available || !accounts.data || typeof accounts.data !== "object") {
     return accounts;
   }
-  const items = (accounts.data as { items?: Array<{ balance: number | null }> }).items ?? [];
-  const known = items
-    .map((item) => item.balance)
-    .filter((value): value is number => value !== null);
-  const withoutBalance = items.length - known.length;
+  const items = (accounts.data as {
+    items?: Array<{ balance: number | null; currency?: string | null }>;
+  }).items ?? [];
+  const totals = new Map<string, { balance: number; accountCount: number }>();
+  for (const item of items) {
+    if (item.balance === null) continue;
+    const currency = item.currency?.trim() || "BRL";
+    const current = totals.get(currency) ?? { balance: 0, accountCount: 0 };
+    totals.set(currency, {
+      balance: current.balance + item.balance,
+      accountCount: current.accountCount + 1,
+    });
+  }
+  const accountsWithBalance = Array.from(totals.values()).reduce(
+    (sum, total) => sum + total.accountCount,
+    0
+  );
+  const withoutBalance = items.length - accountsWithBalance;
+  const totalsByCurrency = Array.from(totals.entries())
+    .map(([currency, total]) => ({
+      currency,
+      balance: Number(total.balance.toFixed(2)),
+      accountCount: total.accountCount,
+    }))
+    .sort((left, right) => left.currency.localeCompare(right.currency));
+  const brl = totalsByCurrency.find((total) => total.currency === "BRL");
   return result(context, {
     accountCount: items.length,
-    accountsWithBalance: known.length,
+    accountsWithBalance,
     accountsWithoutBalance: withoutBalance,
-    totalKnownBalance:
-      known.length > 0
-        ? Number(known.reduce((sum, value) => sum + value, 0).toFixed(2))
-        : null,
+    totalKnownBalance: brl?.balance ?? null,
+    totalKnownBalanceBRL: brl?.balance ?? null,
+    totalsByCurrency,
+    warnings: [
+      ...(withoutBalance > 0
+        ? [`${withoutBalance} conta(s) sem saldo informado; os totais são parciais.`]
+        : []),
+      ...(totalsByCurrency.some((total) => total.currency !== "BRL")
+        ? ["Os saldos em moedas diferentes são apresentados separadamente e não foram convertidos."]
+        : []),
+    ],
+  });
+}
+
+export async function getFinancialOverview(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const competence = competenceFromDate(context.now);
+  const today = toDateOnly(context.now);
+  const accountsQuery = await context.supabase
+    .from("accounts")
+    .select("*")
+    .eq("family_id", context.familyId)
+    .is("deleted_at", null)
+    .order("institution", { ascending: true })
+    .limit(50);
+  assertQuery(accountsQuery.error, "contas financeiras executivas");
+  const accounts = (accountsQuery.data ?? []) as Account[];
+  const trendStart = addCompetenceMonths(competence, -6);
+  const openingStart = accounts
+    .map((account) => account.opening_balance_date)
+    .filter((date): date is string => Boolean(date))
+    .map((date) => `${date.slice(0, 7)}-01`)
+    .sort()[0];
+  const periodStart = openingStart && openingStart < trendStart ? openingStart : trendStart;
+  const periodEnd = addCompetenceMonths(competence, 6);
+  const [entriesQuery, categoriesQuery] = await Promise.all([
+    context.supabase
+      .from("financial_entries")
+      .select("*")
+      .eq("family_id", context.familyId)
+      .gte("competence", periodStart)
+      .lte("competence", periodEnd)
+      .is("deleted_at", null)
+      .order("competence", { ascending: true })
+      .limit(1000),
+    context.supabase
+      .from("financial_categories")
+      .select("*")
+      .eq("family_id", context.familyId)
+      .is("deleted_at", null)
+      .order("name", { ascending: true })
+      .limit(300),
+  ]);
+  assertQuery(entriesQuery.error, "lançamentos financeiros executivos");
+  assertQuery(categoriesQuery.error, "categorias financeiras executivas");
+
+  return result(
+    context,
+    buildFinancialExecutiveOverview({
+      entries: (entriesQuery.data ?? []) as FinancialEntryRow[],
+      accounts,
+      categories: (categoriesQuery.data ?? []) as Category[],
+      competence,
+      today,
+    })
+  );
+}
+
+export async function getInvestmentSummary(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const [assetsQuery, positionsQuery] = await Promise.all([
+    context.supabase
+      .from("investment_assets")
+      .select("*")
+      .eq("family_id", context.familyId)
+      .eq("active", true)
+      .is("deleted_at", null)
+      .order("name", { ascending: true })
+      .limit(100),
+    context.supabase
+      .from("investment_positions")
+      .select("*")
+      .eq("family_id", context.familyId)
+      .order("position_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(300),
+  ]);
+  assertQuery(assetsQuery.error, "investimentos");
+  assertQuery(positionsQuery.error, "posições de investimentos");
+  const summary = summarizeInvestmentPortfolio(
+    (assetsQuery.data ?? []) as InvestmentAsset[],
+    (positionsQuery.data ?? []) as InvestmentPosition[]
+  );
+  return result(context, {
+    ...summary,
+    items: summary.items.map((item) => ({
+      ...item,
+      name: redactSensitiveText(item.name, 120),
+      institution: redactSensitiveText(item.institution, 120),
+      assetType: redactSensitiveText(item.assetType, 80),
+    })),
+  });
+}
+
+export async function getRentAdjustmentAlerts(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const [leasesQuery, propertiesQuery] = await Promise.all([
+    context.supabase
+      .from("lease_contracts")
+      .select("*")
+      .eq("family_id", context.familyId)
+      .is("deleted_at", null)
+      .order("next_adjustment_date", { ascending: true, nullsFirst: false })
+      .limit(100),
+    context.supabase
+      .from("properties")
+      .select("id,title")
+      .eq("family_id", context.familyId)
+      .is("deleted_at", null)
+      .order("title", { ascending: true })
+      .limit(100),
+  ]);
+  assertQuery(leasesQuery.error, "contratos de locação");
+  assertQuery(propertiesQuery.error, "imóveis dos contratos");
+  const propertyNames = new Map(
+    ((propertiesQuery.data ?? []) as Array<{ id: string; title: string }>).map((property) => [
+      property.id,
+      redactSensitiveText(property.title, 120) ?? "Imóvel sem título",
+    ])
+  );
+  return result(
+    context,
+    summarizeRentAdjustments(
+      (leasesQuery.data ?? []) as LeaseContract[],
+      propertyNames,
+      toDateOnly(context.now)
+    )
+  );
+}
+
+export async function getNetWorthSummary(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const [properties, finances, investments] = await Promise.all([
+    loadPropertyPortfolio(context),
+    getFinancialOverview(context),
+    getInvestmentSummary(context),
+  ]);
+  const propertySummary = summarizePropertyPortfolio(properties);
+  const financeData = finances.data as { liquidity?: { availableBalance?: number } } | undefined;
+  const investmentData = investments.data as {
+    totalMarketValueBRL?: number | null;
+    warnings?: string[];
+  } | undefined;
+  const availableBalance = financeData?.liquidity?.availableBalance ?? null;
+  const investmentValue = investmentData?.totalMarketValueBRL ?? null;
+  const propertyEquity = propertySummary.totalNetFamilyEquity;
+  const knownComponents = [availableBalance, investmentValue, propertyEquity].filter(
+    (value): value is number => value !== null
+  );
+  const warnings = [
+    ...propertySummary.warnings,
+    ...(investmentData?.warnings ?? []),
+  ];
+  if (knownComponents.length < 3) {
+    warnings.push("O patrimônio consolidado é parcial porque uma ou mais classes não possuem valor conhecido.");
+  }
+
+  return result(context, {
     currency: "BRL",
-    warnings:
-      withoutBalance > 0
-        ? [`${withoutBalance} conta(s) sem saldo informado; o total é parcial.`]
-        : [],
+    availableBalance,
+    investmentMarketValue: investmentValue,
+    netFamilyPropertyEquity: propertyEquity,
+    totalKnownNetWorth: knownComponents.length
+      ? Number(knownComponents.reduce((sum, value) => sum + value, 0).toFixed(2))
+      : null,
+    warnings,
+  });
+}
+
+export async function getDailyIntegratedSnapshot(
+  context: ExecutiveToolContext
+): Promise<ExecutiveToolResult> {
+  const [finances, investments, rents, properties] = await Promise.all([
+    getFinancialOverview(context),
+    getInvestmentSummary(context),
+    getRentAdjustmentAlerts(context),
+    loadPropertyPortfolio(context),
+  ]);
+  const financeData = finances.data as {
+    current?: {
+      expectedIncome?: number;
+      expectedExpense?: number;
+      effectiveIncome?: number;
+      effectiveExpense?: number;
+      effectiveResult?: number;
+    };
+    liquidity?: {
+      realizedCashIn?: number;
+      realizedCashOut?: number;
+      realizedMonthResult?: number;
+      availableBalance?: number;
+      pendingIncomeThisMonth?: number;
+      pendingExpenseThisMonth?: number;
+      provisionedMonthEndBalance?: number;
+      statedBalancesByCurrency?: Array<{ currency: string; balance: number }>;
+      asOfCompetence?: string;
+      asOfDate?: string;
+    };
+    warnings?: string[];
+  } | undefined;
+  const investmentData = investments.data as {
+    totalMarketValueBRL?: number | null;
+    totalsByCurrency?: Array<{
+      currency: string;
+      assetCount: number;
+      marketValue: number | null;
+      costAmount: number | null;
+      gainAmount: number | null;
+    }>;
+    warnings?: string[];
+  } | undefined;
+  const rentData = rents.data as {
+    activeContractCount?: number;
+    vacantContractCount?: number;
+    contractedMonthlyRent?: number;
+    vacancyMonthlyPotential?: number;
+    averageVacantRent?: number | null;
+    potentialGrossRent?: number;
+    estimatedVacancyRatePercent?: number | null;
+    missingAdjustmentDateCount?: number;
+    warnings?: string[];
+  } | undefined;
+  const propertyData = summarizePropertyPortfolio(properties);
+  const availableBalance = financeData?.liquidity?.availableBalance ?? null;
+  const investmentValueBRL = investmentData?.totalMarketValueBRL ?? null;
+  const propertyEquityBRL = propertyData.totalNetFamilyEquity;
+  const brlComponents = [availableBalance, investmentValueBRL, propertyEquityBRL].filter(
+    (value): value is number => value !== null
+  );
+  const warnings = Array.from(
+    new Set([
+      ...(financeData?.warnings ?? []),
+      ...(investmentData?.warnings ?? []),
+      ...(rentData?.warnings ?? []),
+      ...propertyData.warnings,
+      "Imóvel com aluguel mensal positivo é classificado como locação; sem aluguel positivo, como moradia.",
+      "Vacância só é reconhecida quando o contrato está marcado como vago; moradia não é tratada como vacância.",
+    ])
+  );
+  if (brlComponents.length < 3) {
+    warnings.push("O patrimônio consolidado em reais é parcial por falta de um ou mais componentes.");
+  }
+
+  return result(context, {
+    snapshot: "rx_financeiro_patrimonial_do_dia",
+    asOfDate: financeData?.liquidity?.asOfDate ?? toDateOnly(context.now),
+    competence: financeData?.liquidity?.asOfCompetence ?? competenceFromDate(context.now),
+    cashFlowBRL: {
+      entered: financeData?.liquidity?.realizedCashIn ?? null,
+      left: financeData?.liquidity?.realizedCashOut ?? null,
+      realizedResult: financeData?.liquidity?.realizedMonthResult ?? null,
+      effectiveIncome: financeData?.current?.effectiveIncome ?? null,
+      effectiveExpense: financeData?.current?.effectiveExpense ?? null,
+      effectiveResult: financeData?.current?.effectiveResult ?? null,
+      expectedIncome: financeData?.current?.expectedIncome ?? null,
+      expectedExpense: financeData?.current?.expectedExpense ?? null,
+      availableBalance: financeData?.liquidity?.availableBalance ?? null,
+      pendingIncome: financeData?.liquidity?.pendingIncomeThisMonth ?? null,
+      pendingExpense: financeData?.liquidity?.pendingExpenseThisMonth ?? null,
+      provisionedMonthEndBalance:
+        financeData?.liquidity?.provisionedMonthEndBalance ?? null,
+    },
+    accountBalancesByCurrency: financeData?.liquidity?.statedBalancesByCurrency ?? [],
+    investmentsByCurrency: investmentData?.totalsByCurrency ?? [],
+    knownNetWorthBRL: {
+      availableBalance,
+      investmentMarketValue: investmentValueBRL,
+      netFamilyPropertyEquity: propertyEquityBRL,
+      total: brlComponents.length
+        ? Number(brlComponents.reduce((sum, value) => sum + value, 0).toFixed(2))
+        : null,
+    },
+    properties: {
+      propertyCount: propertyData.propertyCount,
+      rentalPropertyCount: propertyData.rentalPropertyCount,
+      residencePropertyCount: propertyData.residencePropertyCount,
+      grossEstimatedValue: propertyData.totalGrossEstimatedValue,
+      familyProportionalValue: propertyData.totalFamilyProportionalValue,
+      netFamilyEquity: propertyData.totalNetFamilyEquity,
+      estimatedMonthlyRent: propertyData.totalEstimatedMonthlyRent,
+    },
+    rentAndVacancy: {
+      activeContractCount: rentData?.activeContractCount ?? 0,
+      vacantContractCount: rentData?.vacantContractCount ?? 0,
+      contractedMonthlyRent: rentData?.contractedMonthlyRent ?? 0,
+      vacancyMonthlyPotential: rentData?.vacancyMonthlyPotential ?? 0,
+      averageVacantRent: rentData?.averageVacantRent ?? null,
+      potentialGrossRent: rentData?.potentialGrossRent ?? 0,
+      estimatedVacancyRatePercent: rentData?.estimatedVacancyRatePercent ?? null,
+      missingAdjustmentDateCount: rentData?.missingAdjustmentDateCount ?? 0,
+    },
+    warnings,
   });
 }
 
@@ -452,7 +788,7 @@ async function countFamilyRows(context: ExecutiveToolContext, table: string) {
 export async function getDashboard(
   context: ExecutiveToolContext
 ): Promise<ExecutiveToolResult> {
-  const [people, properties, documents, alerts, tasks, expiring, exams, cases] =
+  const [people, properties, documents, alerts, tasks, expiring, exams, cases, finances] =
     await Promise.all([
       countFamilyRows(context, "people"),
       countFamilyRows(context, "properties"),
@@ -462,6 +798,7 @@ export async function getDashboard(
       listExpiringDocuments(context),
       listDueExams(context),
       listActiveCases(context),
+      getFinancialOverview(context),
     ]);
 
   const countFrom = (toolResult: ExecutiveToolResult) => {
@@ -486,7 +823,9 @@ export async function getDashboard(
       documents: expiring.available,
       exams: exams.available,
       cases: cases.available,
+      finances: finances.available,
     },
+    financialSnapshot: finances.available ? finances.data : null,
   });
 }
 

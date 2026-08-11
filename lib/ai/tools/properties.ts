@@ -34,6 +34,12 @@ export type PropertyPortfolioSummary = {
   totalFamilyProportionalValue: number | null;
   totalOutstandingDebt: number | null;
   totalNetFamilyEquity: number | null;
+  propertiesWithMonthlyRentEstimate: number;
+  propertiesWithPositiveRentEstimate: number;
+  propertiesWithoutMonthlyRentEstimate: number;
+  rentalPropertyCount: number;
+  residencePropertyCount: number;
+  totalEstimatedMonthlyRent: number | null;
   currency: "BRL";
   warnings: string[];
 };
@@ -186,6 +192,11 @@ export function summarizePropertyPortfolio(
       `${missingOwnership} imóvel(is) com valor não entraram no total proporcional por falta de percentuais completos.`
     );
   }
+  const knownMonthlyRents = properties
+    .map((property) => property.monthlyRent)
+    .filter((value): value is number => value !== null);
+  const propertiesWithPositiveRentEstimate = knownMonthlyRents.filter((value) => value > 0).length;
+  const propertiesWithoutMonthlyRentEstimate = properties.length - knownMonthlyRents.length;
 
   return {
     propertyCount: properties.length,
@@ -203,6 +214,12 @@ export function summarizePropertyPortfolio(
     totalNetFamilyEquity: sumKnown(
       properties.map((property) => property.netFamilyEquity)
     ),
+    propertiesWithMonthlyRentEstimate: knownMonthlyRents.length,
+    propertiesWithPositiveRentEstimate,
+    propertiesWithoutMonthlyRentEstimate,
+    rentalPropertyCount: propertiesWithPositiveRentEstimate,
+    residencePropertyCount: properties.length - propertiesWithPositiveRentEstimate,
+    totalEstimatedMonthlyRent: sumKnown(knownMonthlyRents),
     currency: "BRL",
     warnings,
   };

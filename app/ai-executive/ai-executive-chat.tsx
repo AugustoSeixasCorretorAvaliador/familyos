@@ -1,14 +1,10 @@
 "use client";
 
 import { FormEvent, useRef, useState } from "react";
-
-const suggestions = [
-  "Como está minha família hoje?",
-  "Quais pendências são urgentes?",
-  "Quais documentos vencem em breve?",
-  "Quais exames estão atrasados?",
-  "Quais são os próximos compromissos?",
-];
+import {
+  executiveQuestionGroups,
+  quickExecutiveQuestions,
+} from "@/lib/ai/suggested-questions";
 
 type Message = {
   id: number;
@@ -86,8 +82,40 @@ export function AIExecutiveChat() {
 
   return (
     <div className="space-y-5">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <label
+          htmlFor="executive-question-library"
+          className="text-sm font-semibold text-slate-900"
+        >
+          Biblioteca de perguntas por módulo
+        </label>
+        <p className="mt-1 text-xs text-slate-500">
+          Escolha uma pergunta pronta. Ela será colocada no campo abaixo para você revisar ou enviar.
+        </p>
+        <select
+          id="executive-question-library"
+          value=""
+          onChange={(event) => chooseSuggestion(event.target.value)}
+          disabled={loading}
+          className="mt-3 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50"
+        >
+          <option value="" disabled>
+            Selecione um módulo e uma pergunta…
+          </option>
+          {executiveQuestionGroups.map((group) => (
+            <optgroup key={group.label} label={group.label}>
+              {group.questions.map((suggestion) => (
+                <option key={suggestion} value={suggestion}>
+                  {suggestion}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </div>
+
       <div className="flex flex-wrap gap-2" aria-label="Sugestões de perguntas">
-        {suggestions.map((suggestion) => (
+        {quickExecutiveQuestions.map((suggestion) => (
           <button
             key={suggestion}
             type="button"
@@ -112,7 +140,7 @@ export function AIExecutiveChat() {
             </div>
             <p className="mt-4 font-medium text-slate-900">Seu panorama familiar, com fatos e prioridades.</p>
             <p className="mt-2 text-sm text-slate-600">
-                Escolha uma sugestão ou pergunte sobre tarefas, documentos, exames, processos, timeline e agenda.
+              Escolha uma sugestão ou consulte a biblioteca por módulo para analisar finanças, patrimônio, tarefas, documentos, saúde, processos, timeline e agenda.
             </p>
           </div>
         ) : (

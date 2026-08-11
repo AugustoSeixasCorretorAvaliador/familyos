@@ -87,4 +87,18 @@ describe("property executive calculations", () => {
     expect(record.familyOwnershipPercentage).toBeNull();
     expect(record.familyProportionalValue).toBeNull();
   });
+
+  it("classifica aluguel positivo como locação e ausência de aluguel como moradia", () => {
+    const rental = buildPropertyExecutiveRecord(
+      property({ metadata: { valor_estimado: 2_000_000, renda_mensal: 5000 } })
+    );
+    const residence = buildPropertyExecutiveRecord(
+      property({ id: "property-2", metadata: { valor_estimado: 1_000_000 } })
+    );
+    const summary = summarizePropertyPortfolio([rental, residence]);
+
+    expect(summary.rentalPropertyCount).toBe(1);
+    expect(summary.residencePropertyCount).toBe(1);
+    expect(summary.totalEstimatedMonthlyRent).toBe(5000);
+  });
 });
