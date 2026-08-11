@@ -16,7 +16,8 @@ import {
   type ExecutiveToolName,
 } from "@/lib/ai/tools";
 
-const MAX_TOOL_ROUNDS = 4;
+const MAX_RESPONSE_ROUNDS = 6;
+const MAX_OUTPUT_TOKENS = 4_000;
 
 export type ExecutiveRunResult = {
   answer: string;
@@ -30,6 +31,7 @@ export async function runExecutive(
   const openai = getOpenAIClient();
   const input: ResponseInput = [{ role: "user", content: question }];
   const calledTools = new Set<ExecutiveToolName>();
+  const answerParts: string[] = [];
   const routedTools = selectExecutiveTools(question);
   const routedResults = await Promise.all(
     routedTools.map(async (name) => ({
@@ -46,14 +48,14 @@ export async function runExecutive(
       JSON.stringify(routedResults),
   });
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+  for (let round = 0; round < MAX_RESPONSE_ROUNDS; round += 1) {
     const response = await openai.responses.create({
       model: getExecutiveModel(),
       instructions: EXECUTIVE_SYSTEM_PROMPT,
       input,
       tools: executiveToolDefinitions,
       parallel_tool_calls: true,
-      max_output_tokens: 1600,
+      max_output_tokens: MAX_OUTPUT_TOKENS,
       store: false,
     });
 
@@ -67,9 +69,30 @@ export async function runExecutive(
 
     if (toolCalls.length === 0) {
       const answer = response.output_text.trim();
+      if (answer) answerParts.push(answer);
+
+      if (response.status === "incomplete") {
+        if (
+          response.incomplete_details?.reason === "max_output_tokens" &&
+          round < MAX_RESPONSE_ROUNDS - 1
+        ) {
+          input.push({
+            role: "user",
+            content:
+              "Continue exatamente do ponto interrompido, sem repetir o texto anterior. " +
+              "Conclua todos os blocos da resposta e finalize com as fontes consultadas.",
+          });
+          continue;
+        }
+
+        throw new Error(
+          `Resposta incompleta: ${response.incomplete_details?.reason ?? "motivo_desconhecido"}`
+        );
+      }
+
       return {
         answer:
-          answer ||
+          answerParts.join("") ||
           "Não foi possível produzir uma resposta segura com os dados disponíveis.",
         tools: Array.from(calledTools),
       };
@@ -112,9 +135,5 @@ export async function runExecutive(
     input.push(...outputs);
   }
 
-  return {
-    answer:
-      "A análise exigiu mais consultas do que o limite seguro desta versão. Tente uma pergunta mais específica.",
-    tools: Array.from(calledTools),
-  };
+  throw new Error("A análise excedeu o limite seguro de rodadas da API.");
 }
