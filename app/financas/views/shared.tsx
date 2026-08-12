@@ -3,7 +3,7 @@ import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { SubmitButton } from "@/app/components/submit-button";
 import { archiveFinanceRecord } from "@/app/financas/actions";
 import { currentCompetence } from "@/lib/finance/services";
-import type { FinanceWorkspace, FinancialEntryRow } from "@/lib/finance/types";
+import type { FinanceView, FinanceWorkspace, FinancialEntryRow } from "@/lib/finance/types";
 
 export const field = "min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100";
 export const panel = "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5";
@@ -47,7 +47,7 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">{children}</div>;
 }
 
-export function ArchiveForm({ id, entity, label = "Arquivar", returnView, returnCompetence, incomeOrder, expenseOrder }: { id: string; entity: string; label?: string; returnView?: "overview" | "movements"; returnCompetence?: string; incomeOrder?: string; expenseOrder?: string }) {
+export function ArchiveForm({ id, entity, label = "Arquivar", returnView, returnCompetence, incomeOrder, expenseOrder }: { id: string; entity: string; label?: string; returnView?: FinanceView; returnCompetence?: string; incomeOrder?: string; expenseOrder?: string }) {
   const confirmMessage = entity === "entry"
     ? "Somente este lançamento será arquivado. Parcelas e recorrências dos outros meses permanecerão ativas. Deseja continuar?"
     : "Esta ação arquiva o registro sem apagar o histórico. Deseja continuar?";
@@ -58,7 +58,8 @@ export function EntryFields({ workspace, entry, defaultCompetence }: { workspace
   const people = workspace.people.map((person) => ({ id: person.id, label: `${person.first_name} ${person.last_name}` }));
   return <>
     <input name="description" required defaultValue={entry?.description} placeholder="Descrição" className={`${field} md:col-span-2`}/>
-    <select name="entry_type" required defaultValue={entry?.entry_type ?? "expense"} className={field}><option value="expense">Despesa</option><option value="income">Receita</option><option value="investment_application">Aporte</option><option value="investment_redemption">Resgate</option><option value="investment_yield">Rendimento</option><option value="adjustment">Ajuste</option></select>
+    <select name="entry_type" required defaultValue={entry?.entry_type ?? "expense"} className={field}><option value="expense">Despesa</option><option value="income">Receita</option><option value="investment_application">Aporte</option><option value="investment_redemption">Resgate</option><option value="investment_yield">Rendimento</option>{entry?.entry_type === "adjustment" && <option value="adjustment">Ajuste de saldo</option>}</select>
+    {entry?.entry_type === "adjustment" && <input type="hidden" name="adjustment_direction" value={entry.cash_direction}/>}
     <input name="competence" type="month" required defaultValue={(entry?.competence ?? defaultCompetence ?? currentCompetence()).slice(0, 7)} className={field}/>
     <input name="expected_amount" required inputMode="decimal" defaultValue={entry?.expected_amount} placeholder="Valor previsto" className={field}/><input name="actual_amount" inputMode="decimal" defaultValue={entry?.actual_amount ?? ""} placeholder="Valor realizado" className={field}/>
     <input name="expected_date" type="date" defaultValue={entry?.expected_date ?? ""} className={field}/><input name="due_date" type="date" defaultValue={entry?.due_date ?? ""} className={field}/><input name="effective_date" type="date" defaultValue={entry?.effective_date ?? ""} className={field}/>

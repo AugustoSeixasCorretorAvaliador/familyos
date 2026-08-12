@@ -6,7 +6,7 @@ export type { FinanceImportCommitResult, FinanceImportPreview, ImportPreviewCoun
 import { createClient } from "@/lib/supabase/server";
 import { collectCursorPages, decodeEntryCursor, encodeEntryCursor } from "@/lib/finance/pagination";
 import { addCompetenceMonths, monthlyOccurrenceDates, recurrenceOccurrenceId } from "@/lib/finance/recurrence";
-import { cashflowEntriesForBalance, effectiveCashflowEntries, monthlyEntryAmount, projectedBalance, projectedBalanceFromStart } from "@/lib/finance/summary";
+import { accountBalanceAtCompetence, effectiveCashflowEntries, monthlyEntryAmount, operatingProjectedBalanceFromStart } from "@/lib/finance/summary";
 import type { DashboardMetrics, FinanceFilters, FinanceWorkspace, FinancialEntryInsert, FinancialEntryPage, FinancialEntryRow } from "@/lib/finance/types";
 
 export { cashflowEntriesForMonth, monthlyEntryAmount } from "@/lib/finance/summary";
@@ -249,36 +249,19 @@ export function calculateDashboard(workspace: FinanceWorkspace, competence: stri
     .map((account) => account.opening_balance_date)
     .filter((date): date is string => Boolean(date))
     .sort()[0] ?? null;
-  const balanceEntries = cashflowEntriesForBalance(workspace.entries, competence, openingBalanceDate);
   const isIncome = (entry: FinancialEntryRow) => ["income", "investment_yield"].includes(entry.entry_type);
   const isExpense = (entry: FinancialEntryRow) => ["expense", "reversal"].includes(entry.entry_type);
   const expectedExpenseAmount = (entry: FinancialEntryRow) => entry.entry_type === "reversal" ? -entry.expected_amount : entry.expected_amount;
   const actualExpenseAmount = (entry: FinancialEntryRow) => entry.entry_type === "reversal" ? -(entry.actual_amount ?? 0) : (entry.actual_amount ?? 0);
-  const cashIn = balanceEntries.filter((entry) => entry.cash_direction === "inflow").reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
-  const cashOut = balanceEntries.filter((entry) => entry.cash_direction === "outflow").reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
-  const opening = workspace.accounts
-    .filter((account) => !account.opening_balance_date || account.opening_balance_date <= competence)
-    .reduce((sum, account) => sum + account.opening_balance, 0);
   const expectedIncome = month.filter(isIncome).reduce((sum, entry) => sum + entry.expected_amount, 0);
   const actualIncome = month.filter(isIncome).reduce((sum, entry) => sum + (entry.actual_amount ?? 0), 0);
   const expectedExpense = month.filter(isExpense).reduce((sum, entry) => sum + expectedExpenseAmount(entry), 0);
   const actualExpense = month.filter(isExpense).reduce((sum, entry) => sum + actualExpenseAmount(entry), 0);
   const monthlyIncome = month.filter(isIncome).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
   const monthlyExpense = month.filter(isExpense).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
-  const available = opening + cashIn - cashOut;
-  const selectedProjected = projectedBalance(opening, balanceEntries, month);
+  const available = workspace.accounts.reduce((sum, account) => sum + accountBalanceAtCompetence(account, workspace.entries, competence), 0);
   const projectionStart = openingBalanceDate ? `${openingBalanceDate.slice(0, 7)}-01` : `${today.slice(0, 7)}-01`;
-  let projected = projectedBalanceFromStart(competence, projectionStart, selectedProjected);
-  if (competence > projectionStart) {
-    const baseMonth = activeEntries.filter((entry) => entry.competence === projectionStart);
-    const baseBalanceEntries = cashflowEntriesForBalance(workspace.entries, projectionStart, openingBalanceDate);
-    const baseOpening = workspace.accounts
-      .filter((account) => !account.opening_balance_date || account.opening_balance_date <= projectionStart)
-      .reduce((sum, account) => sum + account.opening_balance, 0);
-    const baseProjected = projectedBalance(baseOpening, baseBalanceEntries, baseMonth);
-    const subsequentEntries = activeEntries.filter((entry) => entry.competence > projectionStart && entry.competence <= competence);
-    projected = projectedBalanceFromStart(competence, projectionStart, selectedProjected, baseProjected, subsequentEntries);
-  }
+  const projected = operatingProjectedBalanceFromStart(competence, projectionStart, workspace.entries);
   const activePositions = new Map<string, number>();
   const activeAssetIds = new Set(workspace.assets.map((asset) => asset.id));
   for (const position of workspace.positions) if (activeAssetIds.has(position.asset_id) && !activePositions.has(position.asset_id)) activePositions.set(position.asset_id, position.market_value);

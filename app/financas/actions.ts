@@ -170,7 +170,11 @@ function entryFromForm(formData: FormData, context: Context): FinancialEntryInse
   const entryType = oneOf(formData.get("entry_type"), ENTRY_TYPES);
   const actualAmount = moneyValue(formData.get("actual_amount"));
   const status = oneOf(formData.get("status") ?? (actualAmount === null ? "planned" : entryType === "income" ? "received" : "paid"), ENTRY_STATUSES);
-  const direction = entryType === "income" || entryType === "investment_redemption" || entryType === "investment_yield" ? "inflow" : entryType === "transfer" || entryType === "adjustment" || entryType === "reversal" ? "none" : "outflow";
+  const direction = entryType === "income" || entryType === "investment_redemption" || entryType === "investment_yield"
+    ? "inflow"
+    : entryType === "adjustment"
+      ? oneOf(formData.get("adjustment_direction"), ["inflow", "outflow"] as const)
+      : entryType === "transfer" || entryType === "reversal" ? "none" : "outflow";
   return {
     family_id: context.family.id, created_by: context.user.id, description: textValue(formData.get("description"), true)!,
     competence: competenceValue(formData.get("competence")), entry_type: entryType, cash_direction: direction,
@@ -508,6 +512,41 @@ export async function createTransfer(formData: FormData) {
     const { error } = await createClient().from("financial_entries").insert([{ ...common, account_id: from, cash_direction: "outflow", source_key: `transfer:${group}:out` }, { ...common, account_id: to, cash_direction: "inflow", source_key: `transfer:${group}:in` }]); if (error) throw error;
   } catch (error) { actionFailure(error, context, "create_transfer", "movements", returnValues); }
   feedback("movements", "transfer_created", returnValues);
+}
+
+export async function createBalanceAdjustment(formData: FormData) {
+  const context = await requireEditor();
+  const returnValues = { competence: textValue(formData.get("competence"))?.slice(0, 7) };
+  try {
+    assertNoClientFamilyId(formData);
+    const accountId = optionalId(formData, "account_id");
+    if (!accountId) throw new FinanceValidationError("required_fields");
+    const direction = oneOf(formData.get("adjustment_direction"), ["inflow", "outflow"] as const);
+    const amount = moneyValue(formData.get("amount"), true)!;
+    if (amount === 0) throw new FinanceValidationError("invalid_amount");
+    const competence = competenceValue(formData.get("competence"));
+    const effectiveDate = dateValue(formData.get("effective_date"), true)!;
+    const description = textValue(formData.get("description"))
+      ?? (direction === "inflow" ? "Ajuste positivo de saldo" : "Ajuste negativo de saldo");
+    const { error } = await createClient().from("financial_entries").insert({
+      family_id: context.family.id,
+      created_by: context.user.id,
+      description,
+      competence,
+      entry_type: "adjustment",
+      cash_direction: direction,
+      expected_amount: amount,
+      actual_amount: amount,
+      expected_date: effectiveDate,
+      effective_date: effectiveDate,
+      status: direction === "inflow" ? "received" : "paid",
+      origin: "manual",
+      account_id: accountId,
+      metadata: { balance_adjustment: true },
+    });
+    if (error) throw error;
+  } catch (error) { actionFailure(error, context, "create_balance_adjustment", "movements", returnValues); }
+  feedback("movements", "balance_adjusted", returnValues);
 }
 
 export async function createRecurrence(formData: FormData) {
@@ -960,27 +999,29 @@ export async function createInvestmentPosition(formData: FormData) {
 export async function archiveFinanceRecord(formData: FormData) {
   const context = await requireEditor();
   if (!canAdminFamily(context)) redirect("/financas?error=permission_denied");
-  const returnView = formData.get("return_view") === "movements" ? "movements" : "overview";
+  const returnView = oneOf(formData.get("return_view") ?? "overview", ["overview", "movements", "accounts", "categories", "cards", "investments", "properties"] as const);
   const returnValues = {
     competence: textValue(formData.get("return_competence"))?.slice(0, 7),
     income_order: textValue(formData.get("income_order")) ?? undefined,
     expense_order: textValue(formData.get("expense_order")) ?? undefined,
   };
   try {
-    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const entity = textValue(formData.get("entity"), true)!; const now = new Date().toISOString(); const db = createClient(); let error: { message: string } | null = null;
-    if (entity === "account") ({ error } = await db.from("accounts").update({ deleted_at: now, status: "archived", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
-    else if (entity === "category") ({ error } = await db.from("financial_categories").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
-    else if (entity === "card") ({ error } = await db.from("credit_cards").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
+    assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const entity = textValue(formData.get("entity"), true)!; const now = new Date().toISOString(); const db = createClient(); let result: { data: { id: string } | null; error: { message: string } | null } | null = null;
+    if (entity === "account") result = await db.from("accounts").update({ deleted_at: now, status: "archived", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    else if (entity === "category") result = await db.from("financial_categories").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    else if (entity === "card") result = await db.from("credit_cards").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
     else if (entity === "entry") {
       const { data: entry, error: readError } = await db.from("financial_entries")
         .select("id")
         .eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
       if (readError || !entry) throw readError ?? new Error("not_found");
-      ({ error } = await db.from("financial_entries").update({ deleted_at: now, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
+      result = await db.from("financial_entries").update({ deleted_at: now, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
     }
-    else if (entity === "asset") ({ error } = await db.from("investment_assets").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
-    else if (entity === "property") ({ error } = await db.from("properties").update({ deleted_at: now, status: "archived", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id));
-    else throw new FinanceValidationError("invalid_entity"); if (error) throw error;
+    else if (entity === "asset") result = await db.from("investment_assets").update({ deleted_at: now, active: false, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    else if (entity === "property") result = await db.from("properties").update({ deleted_at: now, status: "archived", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    else throw new FinanceValidationError("invalid_entity");
+    if (result.error) throw result.error;
+    if (!result.data) throw new FinanceValidationError("not_found");
   } catch (error) { actionFailure(error, context, "archive_record", returnView, returnValues); }
   feedback(returnView, "archived", returnValues);
 }

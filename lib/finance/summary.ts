@@ -103,6 +103,20 @@ export function cashflowEntriesForBalance(entries: FinancialEntryRow[], competen
   });
 }
 
+export function accountBalanceAtCompetence(account: { id: string; opening_balance: number; opening_balance_date: string | null }, entries: FinancialEntryRow[], competence: string) {
+  const openingBalance = !account.opening_balance_date || account.opening_balance_date <= competence
+    ? account.opening_balance
+    : 0;
+  return cashflowEntriesForBalance(entries, competence, account.opening_balance_date)
+    .filter((entry) => entry.account_id === account.id)
+    .reduce((balance, entry) => {
+      const actualAmount = entry.actual_amount ?? 0;
+      if (entry.cash_direction === "inflow") return balance + actualAmount;
+      if (entry.cash_direction === "outflow") return balance - actualAmount;
+      return balance;
+    }, openingBalance);
+}
+
 export function invoiceEntriesForCard(entries: FinancialEntryRow[], cardId: string, competence: string) {
   return effectiveCashflowEntries(entries).filter((entry) =>
     entry.card_id === cardId
@@ -145,6 +159,14 @@ export function accumulateProjectedBalance(baseProjectedBalance: number, entries
     if (["expense", "reversal"].includes(entry.entry_type)) return balance - monthlyEntryAmount(entry);
     return balance;
   }, baseProjectedBalance);
+}
+
+export function operatingProjectedBalanceFromStart(competence: string, projectionStart: string, entries: FinancialEntryRow[]) {
+  if (competence < projectionStart) return 0;
+  const operatingEntries = effectiveCashflowEntries(entries).filter((entry) =>
+    entry.competence >= projectionStart && entry.competence <= competence
+  );
+  return accumulateProjectedBalance(0, operatingEntries);
 }
 
 export function projectedBalanceFromStart(competence: string, projectionStart: string, selectedProjectedBalance: number, baseProjectedBalance = selectedProjectedBalance, subsequentEntries: FinancialEntryRow[] = []) {

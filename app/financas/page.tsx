@@ -79,7 +79,7 @@ export default async function FinancasPage({ searchParams }: PageProps) {
     {(success || error) && <div role="status" aria-live="polite" className={`rounded-2xl border p-4 ${error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{error ? getActionErrorMessage(error, valueOf(searchParams, "request_id")) : "Operação concluída com sucesso."}</div>}
     {view === "overview" && <DashboardView workspace={workspace} competence={competence} incomeOrder={incomeOrder} expenseOrder={expenseOrder} canEdit={canEdit} canAdmin={canAdmin}/>}
     {view === "movements" && <MovementsView workspace={workspace} page={movementPage} filters={filters} params={searchParams} canEdit={canEdit} canAdmin={canAdmin}/>}
-    {view === "accounts" && <AccountsView workspace={workspace} canEdit={canEdit} canAdmin={canAdmin}/>}
+    {view === "accounts" && <AccountsView workspace={workspace} competence={competence} canEdit={canEdit} canAdmin={canAdmin}/>}
     {view === "cards" && <CardsView workspace={workspace} competence={competence} canEdit={canEdit} canAdmin={canAdmin}/>}
     {view === "invoices" && <InvoicesView workspace={workspace} canEdit={canEdit}/>}
     {view === "installments" && <InstallmentsView workspace={workspace} canEdit={canEdit}/>}

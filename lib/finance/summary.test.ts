@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accumulateProjectedBalance, cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, installmentProgressLabel, invoiceDisplayAmount, invoiceEntriesForCard, invoiceExpectedAmount, isCardCategoryName, monthlyEntryAmount, pendingEntriesTotal, placeCardCategoriesLast, projectedBalance, projectedBalanceFromStart, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import { accountBalanceAtCompetence, accumulateProjectedBalance, cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, installmentProgressLabel, invoiceDisplayAmount, invoiceEntriesForCard, invoiceExpectedAmount, isCardCategoryName, monthlyEntryAmount, operatingProjectedBalanceFromStart, pendingEntriesTotal, placeCardCategoriesLast, projectedBalance, projectedBalanceFromStart, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { CardInvoice, FinancialEntryRow } from "@/lib/finance/types";
 
 function entry(overrides: Partial<FinancialEntryRow> = {}) {
@@ -129,6 +129,43 @@ describe("resumo financeiro mensal", () => {
     expect(projectedBalanceFromStart("2026-07-01", "2026-08-01", 999)).toBe(0);
     expect(projectedBalanceFromStart("2026-08-01", "2026-08-01", -1000)).toBe(-1000);
     expect(projectedBalanceFromStart("2027-07-01", "2026-08-01", 999, -1000, octoberToJuly)).toBe(39000);
+  });
+
+  it("projeta o resultado operacional desde o marco zero sem carregar saldos ou ajustes", () => {
+    const rows = [
+      entry({ id: "income", entry_type: "income", expected_amount: 28056.87, cash_direction: "inflow" }),
+      entry({ id: "expense", entry_type: "expense", expected_amount: 30162.99, cash_direction: "outflow" }),
+      entry({ id: "adjustment", entry_type: "adjustment", expected_amount: 560.96, actual_amount: 560.96, cash_direction: "outflow" }),
+      entry({ id: "transfer-in", entry_type: "transfer", expected_amount: 100, actual_amount: 100, cash_direction: "inflow" }),
+      entry({ id: "transfer-out", entry_type: "transfer", expected_amount: 100, actual_amount: 100, cash_direction: "outflow" }),
+    ];
+
+    expect(operatingProjectedBalanceFromStart("2026-07-01", "2026-08-01", rows)).toBe(0);
+    expect(operatingProjectedBalanceFromStart("2026-08-01", "2026-08-01", rows)).toBeCloseTo(-2106.12);
+  });
+
+  it("aplica ajuste negativo somente ao saldo disponível", () => {
+    const adjustment = entry({
+      entry_type: "adjustment",
+      expected_amount: 560.96,
+      actual_amount: 560.96,
+      cash_direction: "outflow",
+    });
+
+    expect(projectedBalance(4208.96, [adjustment], [])).toBeCloseTo(3648);
+  });
+
+  it("exibe saldo por conta e preserva o total nas transferências", () => {
+    const transferOut = entry({ id: "transfer-out", entry_type: "transfer", account_id: "bradesco", actual_amount: 560, cash_direction: "outflow" });
+    const transferIn = entry({ id: "transfer-in", entry_type: "transfer", account_id: "destino", actual_amount: 560, cash_direction: "inflow" });
+    const bradesco = { id: "bradesco", opening_balance: 1000, opening_balance_date: "2026-08-01" };
+    const destino = { id: "destino", opening_balance: 0, opening_balance_date: "2026-08-01" };
+
+    const bradescoBalance = accountBalanceAtCompetence(bradesco, [transferOut, transferIn], "2026-08-01");
+    const destinoBalance = accountBalanceAtCompetence(destino, [transferOut, transferIn], "2026-08-01");
+    expect(bradescoBalance).toBe(440);
+    expect(destinoBalance).toBe(560);
+    expect(bradescoBalance + destinoBalance).toBe(1000);
   });
 
   it("soma somente lançamentos marcados como recebidos ou pagos", () => {
