@@ -49,6 +49,8 @@ export type DocumentFileIntakeInput = {
   documentId?: string | null;
   ownerPersonId?: string | null;
   propertyId?: string | null;
+  vehicleId?: string | null;
+  insurancePolicyId?: string | null;
   skipOcr?: boolean;
   documentType?: string | null;
   documentNumber?: string | null;
@@ -197,6 +199,8 @@ export async function intakeDocumentFile(
     "documentos.actions",
     "imoveis.actions",
     "saude.actions",
+    "automoveis.actions",
+    "seguros.actions",
   ].includes(input.source ?? "")
     ? input.source!
     : "documentos.actions";
@@ -241,6 +245,8 @@ export async function intakeDocumentFile(
         family_id: input.familyId,
         owner_person_id: ownerPersonId,
         property_id: input.propertyId || null,
+        vehicle_id: input.vehicleId || null,
+        insurance_policy_id: input.insurancePolicyId || null,
         document_type: documentType,
         document_number: input.documentNumber?.trim() || null,
         title,
@@ -319,6 +325,8 @@ export async function intakeDocumentFile(
       .update({
         owner_person_id: ownerPersonId,
         property_id: input.propertyId || undefined,
+        vehicle_id: input.vehicleId || undefined,
+        insurance_policy_id: input.insurancePolicyId || undefined,
         document_type: documentType,
         document_number: input.documentNumber?.trim() || null,
         title,
@@ -350,7 +358,7 @@ export async function intakeDocumentFile(
       })
       .eq("id", documentId)
       .eq("family_id", input.familyId)
-      .select("id, property_id, processing_status, storage_path")
+      .select("id, property_id, vehicle_id, insurance_policy_id, processing_status, storage_path")
       .maybeSingle();
     if (updateError || !persistedDocument) {
       throw updateError ?? new Error("document_intake_not_persisted");
@@ -360,6 +368,15 @@ export async function intakeDocumentFile(
       persistedDocument.property_id !== input.propertyId
     ) {
       throw new Error("document_property_link_not_persisted");
+    }
+    if (input.vehicleId && persistedDocument.vehicle_id !== input.vehicleId) {
+      throw new Error("document_vehicle_link_not_persisted");
+    }
+    if (
+      input.insurancePolicyId &&
+      persistedDocument.insurance_policy_id !== input.insurancePolicyId
+    ) {
+      throw new Error("document_insurance_link_not_persisted");
     }
     if (
       input.skipOcr &&
@@ -1105,7 +1122,7 @@ export async function confirmDocumentReview(formData: FormData) {
 
   const { data: currentDocument, error: currentDocumentError } = await supabase
     .from("documents")
-    .select("metadata, property_id")
+    .select("metadata, property_id, vehicle_id, insurance_policy_id")
     .eq("id", documentId)
     .eq("family_id", family.id)
     .maybeSingle();
@@ -1158,6 +1175,20 @@ export async function confirmDocumentReview(formData: FormData) {
     naturalidade: (formData.get("naturalidade") as string | null)?.trim() || null,
     filiacao: (formData.get("filiacao") as string | null)?.trim() || null,
     valor_monetario: (formData.get("valor_monetario") as string | null)?.trim() || null,
+    placa: (formData.get("placa") as string | null)?.trim() || null,
+    renavam: (formData.get("renavam") as string | null)?.trim() || null,
+    chassi: (formData.get("chassi") as string | null)?.trim() || null,
+    marca: (formData.get("marca") as string | null)?.trim() || null,
+    modelo: (formData.get("modelo") as string | null)?.trim() || null,
+    ano_fabricacao: (formData.get("ano_fabricacao") as string | null)?.trim() || null,
+    ano_modelo: (formData.get("ano_modelo") as string | null)?.trim() || null,
+    seguradora: (formData.get("seguradora") as string | null)?.trim() || null,
+    numero_apolice: (formData.get("numero_apolice") as string | null)?.trim() || null,
+    data_inicio: toDateOrNull((formData.get("data_inicio") as string | null) || null),
+    data_fim: toDateOrNull((formData.get("data_fim") as string | null) || null),
+    valor_segurado: (formData.get("valor_segurado") as string | null)?.trim() || null,
+    valor_pago: (formData.get("valor_pago") as string | null)?.trim() || null,
+    franquia: (formData.get("franquia") as string | null)?.trim() || null,
     observacoes: (formData.get("observacoes") as string | null)?.trim() || null,
   };
 
@@ -1245,10 +1276,18 @@ export async function confirmDocumentReview(formData: FormData) {
   revalidatePath(`/documentos/${documentId}/revisar`);
   revalidatePath("/documentos");
   revalidatePath("/imoveis");
+  revalidatePath("/automoveis");
+  revalidatePath("/seguros");
   revalidatePath("/saude");
   revalidatePath("/dashboard");
   if (currentDocument.property_id) {
     redirect("/imoveis?success=document_uploaded");
+  }
+  if (currentDocument.vehicle_id) {
+    redirect("/automoveis?success=document_uploaded");
+  }
+  if (currentDocument.insurance_policy_id) {
+    redirect("/seguros?success=document_uploaded");
   }
   if (currentMetadata.intake_source === "saude.actions") {
     redirect("/saude?success=exam_created");
@@ -1366,6 +1405,8 @@ export async function updateDocument(formData: FormData) {
     });
     revalidatePath("/documentos");
     revalidatePath("/imoveis");
+    revalidatePath("/automoveis");
+    revalidatePath("/seguros");
     revalidatePath("/dashboard");
     if (!ocrResult.ok) {
       redirect(
@@ -1434,6 +1475,8 @@ export async function updateDocument(formData: FormData) {
 
   revalidatePath("/documentos");
   revalidatePath("/imoveis");
+  revalidatePath("/automoveis");
+  revalidatePath("/seguros");
   revalidatePath("/dashboard");
   redirect("/documentos?success=updated");
 }
@@ -1495,6 +1538,8 @@ export async function deleteDocument(formData: FormData) {
 
   revalidatePath("/documentos");
   revalidatePath("/imoveis");
+  revalidatePath("/automoveis");
+  revalidatePath("/seguros");
   revalidatePath("/dashboard");
   redirect("/documentos?success=deleted");
 }

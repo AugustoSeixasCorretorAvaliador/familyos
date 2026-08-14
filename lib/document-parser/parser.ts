@@ -25,6 +25,8 @@ function detectType(text: string): SupportedDocumentType {
   if (normalized.includes("certidao de casamento")) return "Certidao de Casamento";
   if (normalized.includes("escritura")) return "Escritura";
   if (normalized.includes("matricula") && normalized.includes("imovel")) return "Matricula de Imovel";
+  if (normalized.includes("certificado de registro e licenciamento") || normalized.includes("crlv")) return "CRLV";
+  if (normalized.includes("apolice") && (normalized.includes("seguro") || normalized.includes("seguradora"))) return "Apolice de Seguro";
   if (normalized.includes("contrato")) return "Contrato";
 
   return "Documento Generico";
@@ -137,6 +139,27 @@ export function parseDocumentText(rawText: string): DocumentSuggestion {
   if (filiacao) {
     fields.filiacao = filiacao;
     confidenceByField.filiacao = 0.82;
+  }
+
+  const labelledFields: Array<{
+    key: keyof DocumentSuggestionFields;
+    pattern: RegExp;
+    confidence: number;
+  }> = [
+    { key: "placa", pattern: /placa\s*[:\-]?\s*([a-z]{3}[0-9][a-z0-9][0-9]{2})/i, confidence: 0.94 },
+    { key: "renavam", pattern: /renavam\s*[:\-]?\s*(\d{9,11})/i, confidence: 0.94 },
+    { key: "chassi", pattern: /chassi\s*[:\-]?\s*([a-hj-npr-z0-9]{17})/i, confidence: 0.92 },
+    { key: "numero_apolice", pattern: /ap[oó]lice\s*(?:n[oº°.]*)?\s*[:\-]\s*([a-z0-9.\-/]+)/i, confidence: 0.9 },
+    { key: "seguradora", pattern: /seguradora\s*[:\-]\s*([^\n\r]+)/i, confidence: 0.84 },
+    { key: "valor_segurado", pattern: /valor\s+segurado\s*[:\-]?\s*(r\$\s*[\d.,]+)/i, confidence: 0.86 },
+    { key: "franquia", pattern: /franquia\s*[:\-]?\s*(r\$\s*[\d.,]+)/i, confidence: 0.86 },
+  ];
+  for (const field of labelledFields) {
+    const value = matchFirst(field.pattern, rawText);
+    if (value) {
+      fields[field.key] = value;
+      confidenceByField[field.key] = field.confidence;
+    }
   }
 
   fields.observacoes = `Tipo identificado: ${detectedType}`;

@@ -341,6 +341,204 @@ export type Database = {
           },
         ]
       }
+      insurance_policies: {
+        Row: {
+          broker: string | null
+          created_at: string
+          created_by: string | null
+          deductible_amount: number | null
+          deleted_at: string | null
+          end_date: string
+          family_id: string
+          id: string
+          insured_amount: number | null
+          insured_description: string | null
+          insurance_type: string
+          insurer: string
+          metadata: Json
+          notes: string | null
+          payment_frequency: string | null
+          policy_number: string | null
+          premium_amount: number | null
+          start_date: string
+          status: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          broker?: string | null
+          created_at?: string
+          created_by?: string | null
+          deductible_amount?: number | null
+          deleted_at?: string | null
+          end_date: string
+          family_id: string
+          id?: string
+          insured_amount?: number | null
+          insured_description?: string | null
+          insurance_type: string
+          insurer: string
+          metadata?: Json
+          notes?: string | null
+          payment_frequency?: string | null
+          policy_number?: string | null
+          premium_amount?: number | null
+          start_date: string
+          status?: string
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          broker?: string | null
+          created_at?: string
+          created_by?: string | null
+          deductible_amount?: number | null
+          deleted_at?: string | null
+          end_date?: string
+          family_id?: string
+          id?: string
+          insured_amount?: number | null
+          insured_description?: string | null
+          insurance_type?: string
+          insurer?: string
+          metadata?: Json
+          notes?: string | null
+          payment_frequency?: string | null
+          policy_number?: string | null
+          premium_amount?: number | null
+          start_date?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      insurance_policy_links: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          credit_card_id: string | null
+          family_id: string
+          id: string
+          person_id: string | null
+          policy_id: string
+          property_id: string | null
+          target_type: string
+          vehicle_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          credit_card_id?: string | null
+          family_id: string
+          id?: string
+          person_id?: string | null
+          policy_id: string
+          property_id?: string | null
+          target_type: string
+          vehicle_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          credit_card_id?: string | null
+          family_id?: string
+          id?: string
+          person_id?: string | null
+          policy_id?: string
+          property_id?: string | null
+          target_type?: string
+          vehicle_id?: string | null
+        }
+        Relationships: []
+      }
+      vehicles: {
+        Row: {
+          acquisition_date: string | null
+          acquisition_value: number | null
+          color: string | null
+          created_at: string
+          created_by: string | null
+          deleted_at: string | null
+          estimated_value: number | null
+          family_id: string
+          fuel_type: string | null
+          id: string
+          make: string
+          manufacture_year: number | null
+          metadata: Json
+          model: string
+          model_year: number | null
+          notes: string | null
+          owner_person_id: string | null
+          plate: string | null
+          renavam: string | null
+          status: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+          version: string | null
+          vin: string | null
+        }
+        Insert: {
+          acquisition_date?: string | null
+          acquisition_value?: number | null
+          color?: string | null
+          created_at?: string
+          created_by?: string | null
+          deleted_at?: string | null
+          estimated_value?: number | null
+          family_id: string
+          fuel_type?: string | null
+          id?: string
+          make: string
+          manufacture_year?: number | null
+          metadata?: Json
+          model: string
+          model_year?: number | null
+          notes?: string | null
+          owner_person_id?: string | null
+          plate?: string | null
+          renavam?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: string | null
+          vin?: string | null
+        }
+        Update: {
+          acquisition_date?: string | null
+          acquisition_value?: number | null
+          color?: string | null
+          created_at?: string
+          created_by?: string | null
+          deleted_at?: string | null
+          estimated_value?: number | null
+          family_id?: string
+          fuel_type?: string | null
+          id?: string
+          make?: string
+          manufacture_year?: number | null
+          metadata?: Json
+          model?: string
+          model_year?: number | null
+          notes?: string | null
+          owner_person_id?: string | null
+          plate?: string | null
+          renavam?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: string | null
+          vin?: string | null
+        }
+        Relationships: []
+      }
       doctors: {
         Row: {
           address: string | null
@@ -646,6 +844,8 @@ export type Database = {
           owner_person_id: string | null
           processing_status: string
           property_id: string | null
+          vehicle_id: string | null
+          insurance_policy_id: string | null
           review_required: boolean
           status: Database["public"]["Enums"]["record_status"]
           storage_path: string
@@ -679,6 +879,8 @@ export type Database = {
           owner_person_id?: string | null
           processing_status?: string
           property_id?: string | null
+          vehicle_id?: string | null
+          insurance_policy_id?: string | null
           review_required?: boolean
           status?: Database["public"]["Enums"]["record_status"]
           storage_path: string
@@ -712,6 +914,8 @@ export type Database = {
           owner_person_id?: string | null
           processing_status?: string
           property_id?: string | null
+          vehicle_id?: string | null
+          insurance_policy_id?: string | null
           review_required?: boolean
           status?: Database["public"]["Enums"]["record_status"]
           storage_path?: string

@@ -14,6 +14,8 @@ export type SupportedDocumentType =
   | "Laudo Medico"
   | "Receita"
   | "Exame"
+  | "CRLV"
+  | "Apolice de Seguro"
   | "Documento Generico";
 
 export type DocumentSuggestionFields = {
@@ -35,6 +37,20 @@ export type DocumentSuggestionFields = {
   naturalidade?: string;
   filiacao?: string;
   valor_monetario?: string;
+  placa?: string;
+  renavam?: string;
+  chassi?: string;
+  marca?: string;
+  modelo?: string;
+  ano_fabricacao?: string;
+  ano_modelo?: string;
+  seguradora?: string;
+  numero_apolice?: string;
+  data_inicio?: string;
+  data_fim?: string;
+  valor_segurado?: string;
+  valor_pago?: string;
+  franquia?: string;
   observacoes?: string;
 };
 

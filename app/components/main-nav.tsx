@@ -7,6 +7,8 @@ type MainNavProps = {
     | "ai-executive"
     | "pessoas"
     | "imoveis"
+    | "automoveis"
+    | "seguros"
     | "documentos"
     | "financas"
     | "saude"
@@ -22,6 +24,8 @@ const items: Array<{ key: MainNavProps["current"]; label: string; href?: string 
   { key: "ai-executive", label: "AI Executive", href: "/ai-executive" },
   { key: "pessoas", label: "Pessoas", href: "/pessoas" },
   { key: "imoveis", label: "Imoveis", href: "/imoveis" },
+  { key: "automoveis", label: "Automóveis", href: "/automoveis" },
+  { key: "seguros", label: "Seguros", href: "/seguros" },
   { key: "documentos", label: "Documentos", href: "/documentos" },
   { key: "financas", label: "Financas", href: "/financas" },
   { key: "saude", label: "Saude", href: "/saude" },

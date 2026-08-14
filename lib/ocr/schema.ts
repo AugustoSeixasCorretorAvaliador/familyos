@@ -21,6 +21,8 @@ export const OCR_DOCUMENT_TYPES = [
   "Laudo Medico",
   "Receita",
   "Exame",
+  "CRLV",
+  "Apolice de Seguro",
   "Documento Generico",
 ] as const;
 
@@ -43,6 +45,20 @@ export const OCR_FIELD_KEYS = [
   "naturalidade",
   "filiacao",
   "valor_monetario",
+  "placa",
+  "renavam",
+  "chassi",
+  "marca",
+  "modelo",
+  "ano_fabricacao",
+  "ano_modelo",
+  "seguradora",
+  "numero_apolice",
+  "data_inicio",
+  "data_fim",
+  "valor_segurado",
+  "valor_pago",
+  "franquia",
   "observacoes",
 ] as const;
 

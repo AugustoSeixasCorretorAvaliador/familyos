@@ -13,6 +13,8 @@ const TYPE_SPECIALIZATIONS: Record<string, string> = {
   "laudo medico": "Extraia paciente, profissional, registro, data, conclusao e observacoes clinicas legiveis.",
   receita: "Extraia paciente, profissional, registro, data, medicamentos, posologia e validade.",
   exame: "Extraia paciente, tipo, laboratorio, data, resultados e observacoes legiveis.",
+  CRLV: "Extraia placa, RENAVAM, chassi, marca, modelo, ano de fabricacao, ano do modelo, proprietario, emissao e validade.",
+  apolice: "Extraia numero da apolice, seguradora, inicio e fim da vigencia, valor segurado, valor pago, franquia e objeto segurado.",
   generico: "Classifique o documento e extraia somente campos explicitamente visiveis.",
 };
 
