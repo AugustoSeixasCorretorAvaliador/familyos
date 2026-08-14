@@ -9,6 +9,19 @@ import { ArchiveForm, currency, Empty, field, monthLabel, Options, panel, SaveBu
 
 type DashboardAccess = { canEdit: boolean; canAdmin: boolean };
 type MonthlyOrder = "alpha" | "category";
+type MetricTone = "slate" | "emerald" | "amber" | "red" | "sky";
+type MetricItem = { label: string; amount: number; help?: string };
+type PrimaryMetricItem = MetricItem & { tone: MetricTone };
+
+function MetricInfo({ label, help, light = false }: { label: string; help: string; light?: boolean }) {
+  return <span className="flex items-center gap-1.5">
+    <span>{label}</span>
+    <span className="group/info relative inline-flex normal-case tracking-normal">
+      <button type="button" aria-label={`Como é calculado: ${label}`} className={`grid h-4 w-4 place-items-center rounded-full border text-[10px] font-bold ${light ? "border-white/50 text-white/90" : "border-slate-300 text-slate-500"}`}>i</button>
+      <span role="tooltip" className="pointer-events-none invisible absolute right-0 top-full z-30 mt-2 w-72 rounded-xl bg-slate-950 p-3 text-left text-xs font-normal leading-relaxed text-white opacity-0 shadow-xl transition group-hover/info:visible group-hover/info:opacity-100 group-focus-within/info:visible group-focus-within/info:opacity-100">{help}</span>
+    </span>
+  </span>;
+}
 
 function MonthlyProjectionForm({ workspace, competence, entryType }: { workspace: FinanceWorkspace; competence: string; entryType: "income" | "expense" }) {
   const isIncome = entryType === "income";
@@ -108,24 +121,25 @@ export function DashboardView({ workspace, competence, incomeOrder, expenseOrder
   const monthEntries = cashflowEntriesForMonth(workspace.entries, competence);
   const incomeEntries = monthEntries.filter((entry) => ["income", "investment_yield"].includes(entry.entry_type));
   const expenseEntries = monthEntries.filter((entry) => ["expense", "reversal"].includes(entry.entry_type));
-  const primaryItems = [
-    ["Receitas do mês", metrics.monthlyIncome, "emerald"],
-    ["Despesas do mês", metrics.monthlyExpense, "amber"],
-    ["Saldo do mês", metrics.monthlyResult, metrics.monthlyResult >= 0 ? "sky" : "red"],
-    ["Investimentos", metrics.investments, "slate"],
-  ] as const;
-  const secondaryItems = [
-    ["Recebido", metrics.actualIncome], ["Pago", metrics.actualExpense],
-    ["Saldo em contas", metrics.available], ["Saldo projetado", metrics.projected],
-  ] as const;
+  const primaryItems: PrimaryMetricItem[] = [
+    { label: "Receitas do mês", amount: metrics.monthlyIncome, tone: "emerald" },
+    { label: "Despesas do mês", amount: metrics.monthlyExpense, tone: "amber" },
+    { label: "Resultado do mês", amount: metrics.monthlyResult, tone: metrics.monthlyResult >= 0 ? "sky" : "red", help: "Receitas do mês menos despesas do mês. Usa o valor realizado quando informado e o valor previsto para o que ainda está pendente. Não inclui o saldo anterior das contas." },
+    { label: "Investimentos", amount: metrics.investments, tone: "slate" },
+  ];
+  const secondaryItems: MetricItem[] = [
+    { label: "Recebido", amount: metrics.actualIncome }, { label: "Pago", amount: metrics.actualExpense },
+    { label: "Saldo em contas", amount: metrics.available },
+    { label: "Saldo projetado", amount: metrics.projected, help: "No mês atual: saldo atual das contas mais valores ainda a receber, menos valores ainda a pagar. Nos meses seguintes: saldo projetado do mês anterior mais receitas, menos despesas do mês." },
+  ];
   const tones = { slate: "from-slate-900 to-slate-700", emerald: "from-emerald-700 to-emerald-500", amber: "from-amber-600 to-orange-500", red: "from-rose-700 to-red-500", sky: "from-sky-700 to-cyan-500" };
   const months = buildTimeline(workspace.entries, competence);
   const recurrenceRanges = recurrenceRangesFromEntries(workspace.entries);
   const scale = Math.max(...months.map((item) => Math.max(item.income, item.expense)), 1);
 
   return <div className="space-y-5">
-    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{primaryItems.map(([label, amount, tone]) => <article key={label} className={`rounded-2xl bg-gradient-to-br ${tones[tone]} p-5 text-white shadow-sm`}><p className="text-xs font-semibold uppercase tracking-wider text-white/70">{label}</p><p className="mt-2 text-2xl font-semibold tabular-nums">{currency.format(amount)}</p></article>)}</section>
-    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{secondaryItems.map(([label, amount]) => <article key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</p><p className={`mt-2 text-lg font-semibold tabular-nums ${amount < 0 ? "text-red-600" : "text-slate-900"}`}>{currency.format(amount)}</p></article>)}</section>
+    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{primaryItems.map(({ label, amount, tone, help }) => <article key={label} className={`rounded-2xl bg-gradient-to-br ${tones[tone]} p-5 text-white shadow-sm`}><p className="text-xs font-semibold uppercase tracking-wider text-white/70">{help ? <MetricInfo label={label} help={help} light/> : label}</p><p className="mt-2 text-2xl font-semibold tabular-nums">{currency.format(amount)}</p></article>)}</section>
+    <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{secondaryItems.map(({ label, amount, help }) => <article key={label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{help ? <MetricInfo label={label} help={help}/> : label}</p><p className={`mt-2 text-lg font-semibold tabular-nums ${amount < 0 ? "text-red-600" : "text-slate-900"}`}>{currency.format(amount)}</p></article>)}</section>
 
     {canEdit && <details className="group"><summary className="mb-4 flex cursor-pointer list-none items-center justify-between rounded-2xl border border-sky-200 bg-white px-4 py-3 font-semibold text-slate-900 shadow-sm"><span>Adicionar receitas e despesas mensais</span><span className="rounded-full bg-sky-100 px-3 py-1 text-xs text-sky-700"><span className="group-open:hidden">Exibir os 2 quadros</span><span className="hidden group-open:inline">Recolher os 2 quadros</span></span></summary><section className="grid gap-5 lg:grid-cols-2"><div className={panel}><div className="mb-4"><p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">Entradas</p><h2 className="text-lg font-semibold text-slate-900">Nova receita mensal</h2></div><MonthlyProjectionForm workspace={workspace} competence={competence} entryType="income"/></div><div className={panel}><div className="mb-4"><p className="text-xs font-semibold uppercase tracking-wider text-amber-700">Saídas</p><h2 className="text-lg font-semibold text-slate-900">Nova despesa mensal</h2></div><MonthlyProjectionForm workspace={workspace} competence={competence} entryType="expense"/></div></section></details>}
 

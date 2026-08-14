@@ -174,3 +174,17 @@ export function projectedBalanceFromStart(competence: string, projectionStart: s
   if (competence === projectionStart) return selectedProjectedBalance;
   return accumulateProjectedBalance(baseProjectedBalance, subsequentEntries);
 }
+
+export function cashProjectedBalanceFromStart(competence: string, projectionStart: string, availableBalance: number, entries: FinancialEntryRow[]) {
+  if (competence < projectionStart) return 0;
+  const projectionEntries = effectiveCashflowEntries(entries).filter((entry) =>
+    entry.competence >= projectionStart && entry.competence <= competence
+  );
+  const startEntries = projectionEntries.filter((entry) => entry.competence === projectionStart);
+  const startProjectedBalance = projectedBalance(availableBalance, [], startEntries);
+  if (competence === projectionStart) return startProjectedBalance;
+  return accumulateProjectedBalance(
+    startProjectedBalance,
+    projectionEntries.filter((entry) => entry.competence > projectionStart)
+  );
+}

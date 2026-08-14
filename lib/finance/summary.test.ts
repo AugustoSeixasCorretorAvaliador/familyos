@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accountBalanceAtCompetence, accumulateProjectedBalance, cashflowEntriesForBalance, effectiveCashflowEntries, expectedEntriesTotal, installmentProgressLabel, invoiceDisplayAmount, invoiceEntriesForCard, invoiceExpectedAmount, isCardCategoryName, monthlyEntryAmount, operatingProjectedBalanceFromStart, pendingEntriesTotal, placeCardCategoriesLast, projectedBalance, projectedBalanceFromStart, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import { accountBalanceAtCompetence, accumulateProjectedBalance, cashflowEntriesForBalance, cashProjectedBalanceFromStart, effectiveCashflowEntries, expectedEntriesTotal, installmentProgressLabel, invoiceDisplayAmount, invoiceEntriesForCard, invoiceExpectedAmount, isCardCategoryName, monthlyEntryAmount, operatingProjectedBalanceFromStart, pendingEntriesTotal, placeCardCategoriesLast, projectedBalance, projectedBalanceFromStart, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { CardInvoice, FinancialEntryRow } from "@/lib/finance/types";
 
 function entry(overrides: Partial<FinancialEntryRow> = {}) {
@@ -129,6 +129,20 @@ describe("resumo financeiro mensal", () => {
     expect(projectedBalanceFromStart("2026-07-01", "2026-08-01", 999)).toBe(0);
     expect(projectedBalanceFromStart("2026-08-01", "2026-08-01", -1000)).toBe(-1000);
     expect(projectedBalanceFromStart("2027-07-01", "2026-08-01", 999, -1000, octoberToJuly)).toBe(39000);
+  });
+
+  it("ancora o mês atual no saldo das contas e transporta o projetado aos meses seguintes", () => {
+    const rows = [
+      entry({ id: "received", entry_type: "income", cash_direction: "inflow", expected_amount: 31656.87, actual_amount: 31656.87 }),
+      entry({ id: "receivable", entry_type: "income", cash_direction: "inflow", expected_amount: 6400 }),
+      entry({ id: "paid", entry_type: "expense", cash_direction: "outflow", expected_amount: 24964.2, actual_amount: 24964.2 }),
+      entry({ id: "payable", entry_type: "expense", cash_direction: "outflow", expected_amount: 12057.29 }),
+      entry({ id: "september-income", competence: "2026-09-01", entry_type: "income", cash_direction: "inflow", expected_amount: 4000 }),
+      entry({ id: "september-expense", competence: "2026-09-01", entry_type: "expense", cash_direction: "outflow", expected_amount: 3000 }),
+    ];
+
+    expect(cashProjectedBalanceFromStart("2026-08-01", "2026-08-01", 8275.45, rows)).toBeCloseTo(2618.16);
+    expect(cashProjectedBalanceFromStart("2026-09-01", "2026-08-01", 8275.45, rows)).toBeCloseTo(3618.16);
   });
 
   it("projeta o resultado operacional desde o marco zero sem carregar saldos ou ajustes", () => {

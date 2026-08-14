@@ -6,7 +6,7 @@ export type { FinanceImportCommitResult, FinanceImportPreview, ImportPreviewCoun
 import { createClient } from "@/lib/supabase/server";
 import { collectCursorPages, decodeEntryCursor, encodeEntryCursor } from "@/lib/finance/pagination";
 import { addCompetenceMonths, monthlyOccurrenceDates, recurrenceOccurrenceId } from "@/lib/finance/recurrence";
-import { accountBalanceAtCompetence, effectiveCashflowEntries, monthlyEntryAmount, operatingProjectedBalanceFromStart } from "@/lib/finance/summary";
+import { accountBalanceAtCompetence, cashProjectedBalanceFromStart, effectiveCashflowEntries, monthlyEntryAmount } from "@/lib/finance/summary";
 import type { DashboardMetrics, FinanceFilters, FinanceWorkspace, FinancialEntryInsert, FinancialEntryPage, FinancialEntryRow } from "@/lib/finance/types";
 
 export { cashflowEntriesForMonth, monthlyEntryAmount } from "@/lib/finance/summary";
@@ -245,10 +245,6 @@ export async function ensureFinanceRecurrences(familyId: string, userId: string,
 export function calculateDashboard(workspace: FinanceWorkspace, competence: string, today = new Date().toISOString().slice(0, 10)): DashboardMetrics {
   const activeEntries = effectiveCashflowEntries(workspace.entries);
   const month = activeEntries.filter((entry) => entry.competence === competence);
-  const openingBalanceDate = workspace.accounts
-    .map((account) => account.opening_balance_date)
-    .filter((date): date is string => Boolean(date))
-    .sort()[0] ?? null;
   const isIncome = (entry: FinancialEntryRow) => ["income", "investment_yield"].includes(entry.entry_type);
   const isExpense = (entry: FinancialEntryRow) => ["expense", "reversal"].includes(entry.entry_type);
   const expectedExpenseAmount = (entry: FinancialEntryRow) => entry.entry_type === "reversal" ? -entry.expected_amount : entry.expected_amount;
@@ -260,8 +256,12 @@ export function calculateDashboard(workspace: FinanceWorkspace, competence: stri
   const monthlyIncome = month.filter(isIncome).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
   const monthlyExpense = month.filter(isExpense).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
   const available = workspace.accounts.reduce((sum, account) => sum + accountBalanceAtCompetence(account, workspace.entries, competence), 0);
-  const projectionStart = openingBalanceDate ? `${openingBalanceDate.slice(0, 7)}-01` : `${today.slice(0, 7)}-01`;
-  const projected = operatingProjectedBalanceFromStart(competence, projectionStart, workspace.entries);
+  const currentCompetence = `${today.slice(0, 7)}-01`;
+  const projectionStart = competence < currentCompetence ? competence : currentCompetence;
+  const projectionAvailable = workspace.accounts.reduce((sum, account) =>
+    sum + accountBalanceAtCompetence(account, workspace.entries, projectionStart), 0
+  );
+  const projected = cashProjectedBalanceFromStart(competence, projectionStart, projectionAvailable, workspace.entries);
   const activePositions = new Map<string, number>();
   const activeAssetIds = new Set(workspace.assets.map((asset) => asset.id));
   for (const position of workspace.positions) if (activeAssetIds.has(position.asset_id) && !activePositions.has(position.asset_id)) activePositions.set(position.asset_id, position.market_value);
