@@ -19,18 +19,38 @@ type MainNavProps = {
     | "relacionamentos";
 };
 
-const items: Array<{ key: MainNavProps["current"]; label: string; href?: string }> = [
-  { key: "dashboard", label: "Dashboard", href: "/dashboard" },
-  { key: "ai-executive", label: "AI Executive", href: "/ai-executive" },
+const items: Array<{
+  key: MainNavProps["current"];
+  label: string;
+  href: string;
+  featuredClassName?: string;
+}> = [
+  {
+    key: "dashboard",
+    label: "Dashboard",
+    href: "/dashboard",
+    featuredClassName: "font-bold text-emerald-700 hover:text-emerald-600",
+  },
+  {
+    key: "ai-executive",
+    label: "AI Executive",
+    href: "/ai-executive",
+    featuredClassName: "font-bold text-blue-700 hover:text-blue-600",
+  },
+  {
+    key: "financas",
+    label: "Finanças",
+    href: "/financas",
+    featuredClassName: "font-bold text-red-700 hover:text-red-600",
+  },
+  { key: "agenda", label: "Agenda", href: "/agenda" },
+  { key: "tarefas", label: "Tarefas", href: "/tarefas" },
   { key: "pessoas", label: "Pessoas", href: "/pessoas" },
-  { key: "imoveis", label: "Imoveis", href: "/imoveis" },
+  { key: "saude", label: "Saúde", href: "/saude" },
+  { key: "imoveis", label: "Imóveis", href: "/imoveis" },
   { key: "automoveis", label: "Automóveis", href: "/automoveis" },
   { key: "seguros", label: "Seguros", href: "/seguros" },
   { key: "documentos", label: "Documentos", href: "/documentos" },
-  { key: "financas", label: "Financas", href: "/financas" },
-  { key: "saude", label: "Saude", href: "/saude" },
-  { key: "agenda", label: "Agenda", href: "/agenda" },
-  { key: "tarefas", label: "Tarefas", href: "/tarefas" },
   { key: "processos", label: "Processos", href: "/processos" },
   { key: "timeline", label: "Timeline", href: "/timeline" },
   { key: "relacionamentos", label: "Relacionamentos", href: "/relacionamentos" },
@@ -55,24 +75,17 @@ export function MainNav({ current }: MainNavProps) {
       <div className="flex flex-wrap gap-x-3 gap-y-2 text-sm">
         {items.map((item) => {
           const isCurrent = current === item.key;
-          if (!item.href) {
-            return (
-              <span key={item.key} className="text-slate-400">
-                {item.label}
-              </span>
-            );
-          }
-
           return (
             <Link
               key={item.key}
               href={item.href}
               aria-current={isCurrent ? "page" : undefined}
-              className={
-                isCurrent
+              className={`transition-colors ${
+                item.featuredClassName ??
+                (isCurrent
                   ? "font-semibold text-[#075fc7]"
-                  : "text-slate-600 transition-colors hover:text-[#075fc7]"
-              }
+                  : "text-slate-600 hover:text-[#075fc7]")
+              }`}
             >
               {item.label}
             </Link>
