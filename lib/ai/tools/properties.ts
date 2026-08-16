@@ -59,6 +59,8 @@ export type PropertyExecutiveInput = {
     ownershipPercentage: unknown;
   }>;
   outstandingDebt?: unknown;
+  valuationDate?: unknown;
+  valuationSource?: unknown;
 };
 
 function finiteNumber(value: unknown, options?: { min?: number; max?: number }) {
@@ -86,7 +88,8 @@ export function buildPropertyExecutiveRecord(
 ): PropertyExecutiveRecord {
   const metadata = input.metadata ?? {};
   const warnings: string[] = [];
-  const fullEstimatedValue = finiteNumber(metadata.valor_estimado, { min: 0 });
+  const parsedEstimatedValue = finiteNumber(metadata.valor_estimado, { min: 0 });
+  const fullEstimatedValue = parsedEstimatedValue !== null && parsedEstimatedValue > 0 ? parsedEstimatedValue : null;
   const monthlyRent = finiteNumber(metadata.renda_mensal, { min: 0 });
   const outstandingDebt = finiteNumber(input.outstandingDebt, { min: 0 });
   const owners = input.owners.map((owner) => {
@@ -156,8 +159,8 @@ export function buildPropertyExecutiveRecord(
     status: redactSensitiveText(input.status, 80),
     owners,
     fullEstimatedValue,
-    valuationDate: null,
-    valuationSource: null,
+    valuationDate: redactSensitiveText(input.valuationDate, 20),
+    valuationSource: redactSensitiveText(input.valuationSource, 160),
     familyOwnershipPercentage,
     familyProportionalValue,
     outstandingDebt,

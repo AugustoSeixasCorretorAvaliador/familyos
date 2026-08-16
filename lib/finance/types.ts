@@ -15,6 +15,8 @@ export type LeaseContract = Tables<"lease_contracts">;
 export type LeaseOwnerShare = Tables<"lease_owner_shares">;
 export type InvestmentAsset = Tables<"investment_assets">;
 export type InvestmentPosition = Tables<"investment_positions">;
+export type ExchangeRate = Tables<"exchange_rates">;
+export type DataIntegrityAudit = Tables<"data_integrity_audit">;
 export type FinancialEntryHistory = Tables<"financial_entry_history">;
 export type FinancialAlertRule = Tables<"financial_alert_rules">;
 export type Person = Pick<Tables<"people">, "id" | "first_name" | "last_name">;
@@ -60,6 +62,8 @@ export type FinanceWorkspace = {
   shares: LeaseOwnerShare[];
   assets: InvestmentAsset[];
   positions: InvestmentPosition[];
+  exchangeRates: ExchangeRate[];
+  integrityAudit: DataIntegrityAudit[];
   alerts: FinancialAlertRule[];
   history: FinancialEntryHistory[];
   people: Person[];

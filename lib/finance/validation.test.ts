@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertNoClientFamilyId, competenceValue, dateValue, FinanceValidationError, integerValue, moneyValue, validatePercentage } from "@/lib/finance/validation";
+import { assertNoClientFamilyId, competenceValue, dateValue, FinanceValidationError, integerValue, moneyValue, positiveDecimalValue, validatePercentage } from "@/lib/finance/validation";
 
 describe("finance validation", () => {
   it("aceita moeda brasileira sem perder centavos", () => {
@@ -11,6 +11,12 @@ describe("finance validation", () => {
   it("rejeita valor negativo ou com precisão inválida", () => {
     expect(() => moneyValue("-1,00", true)).toThrow(FinanceValidationError);
     expect(() => moneyValue("1,001", true)).toThrow(FinanceValidationError);
+  });
+
+  it("aceita cotação positiva com até oito casas decimais", () => {
+    expect(positiveDecimalValue("5,43218765", { required: true, maxDecimals: 8 })).toBe(5.43218765);
+    expect(() => positiveDecimalValue("0", { required: true })).toThrow("invalid_number");
+    expect(() => positiveDecimalValue("5,123456789", { maxDecimals: 8 })).toThrow("invalid_number");
   });
 
   it("normaliza competência mensal para o primeiro dia", () => {

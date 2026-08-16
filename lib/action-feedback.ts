@@ -7,6 +7,7 @@ export type ActionErrorCode =
   | "too_many_files"
   | "multiple_files_require_archive"
   | "invalid_amount"
+  | "invalid_percentage"
   | "permission_denied"
   | "self_access_protected"
   | "last_admin_required"
@@ -43,6 +44,7 @@ const ERROR_MESSAGES: Record<ActionErrorCode, string> = {
   multiple_files_require_archive:
     "Para enviar varios arquivos de uma vez, marque Somente arquivar no historico.",
   invalid_amount: "Informe um valor monetario valido, com no maximo duas casas decimais.",
+  invalid_percentage: "Informe participacoes entre 0% e 100%, com soma total de no maximo 100%.",
   permission_denied: "A politica de seguranca nao permite esta operacao para o seu perfil.",
   self_access_protected:
     "Seu proprio nivel de acesso nao pode ser alterado nesta tela, evitando bloqueio acidental.",

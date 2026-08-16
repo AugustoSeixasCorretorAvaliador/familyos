@@ -42,9 +42,14 @@ type PropertyRow = {
   postal_code: string | null;
   property_type: string | null;
   registry_number: string | null;
+  outstanding_debt: number | null;
+  valuation_date: string | null;
+  valuation_source: string | null;
+  ownership_review_status: string;
   metadata: Record<string, unknown> | null;
   property_owners: Array<{
     person_id: string;
+    ownership_percentage: number | null;
     people:
       | {
           first_name: string;
@@ -90,6 +95,7 @@ const fieldClass = "block w-full rounded-xl border border-slate-300 px-3 py-2";
 function PropertyFields({ property, people }: { property?: PropertyRow; people: PersonOption[] }) {
   const metadata = property?.metadata ?? {};
   const ownerIds = property?.property_owners.map((owner) => owner.person_id) ?? [];
+  const ownershipByPerson = new Map(property?.property_owners.map((owner) => [owner.person_id, owner.ownership_percentage]) ?? []);
   return <>
     <FieldLabel label="Nome de identificação" help="Nome amigável usado para localizar o imóvel em patrimônio, finanças, tarefas, documentos e seguros."><input name="title" required defaultValue={property?.title ?? ""} placeholder="Ex.: Apartamento Centro" className={fieldClass} /></FieldLabel>
     <FieldLabel label="Tipo de imóvel" help="Classifica o bem, como apartamento, casa, terreno ou sala comercial."><input name="property_type" defaultValue={property?.property_type ?? ""} placeholder="Ex.: Apartamento" className={fieldClass} /></FieldLabel>
@@ -100,11 +106,14 @@ function PropertyFields({ property, people }: { property?: PropertyRow; people: 
     <FieldLabel label="Matrícula / RGI" help="Identificador registral do imóvel para rastreabilidade jurídica e documental."><input name="registry_number" defaultValue={property?.registry_number ?? ""} placeholder="Matrícula ou RGI" className={fieldClass} /></FieldLabel>
     <FieldLabel label="Situação" help="Define se o imóvel é próprio, alugado, está à venda, vendido, em aquisição ou vago."><select name="situacao" defaultValue={String(metadata.situacao ?? "Proprio")} className={fieldClass}>{SITUACOES.map((situacao) => <option key={situacao}>{situacao}</option>)}</select></FieldLabel>
     <FieldLabel label="Valor estimado" help="Valor atual usado no cálculo do patrimônio total exibido em Imóveis."><input name="valor_estimado" defaultValue={String(metadata.valor_estimado ?? "")} inputMode="decimal" placeholder="Ex.: 850.000,00" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Dívida vinculada" help="Saldo devedor do imóvel abatido do valor proporcional para calcular o patrimônio líquido familiar."><input name="outstanding_debt" defaultValue={property?.outstanding_debt ?? ""} inputMode="decimal" placeholder="Ex.: 120.000,00" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Data da avaliação" help="Data de referência do valor estimado; permite saber se a avaliação está atualizada."><input name="valuation_date" type="date" defaultValue={property?.valuation_date ?? ""} className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Fonte da avaliação" help="Origem do valor estimado, como avaliação profissional, anúncio comparável ou valor declarado."><input name="valuation_source" defaultValue={property?.valuation_source ?? ""} placeholder="Ex.: Laudo de avaliação" className={fieldClass} /></FieldLabel>
     <FieldLabel label="Renda mensal" help="Receita mensal informativa do imóvel, somada no resumo de aluguéis desta visualização."><input name="renda_mensal" defaultValue={String(metadata.renda_mensal ?? "")} inputMode="decimal" placeholder="Ex.: 3.500,00" className={fieldClass} /></FieldLabel>
     <FieldLabel label="Condomínio" help="Valor mensal de condomínio mantido como referência de custo do imóvel."><input name="condominio" defaultValue={String(metadata.condominio ?? "")} inputMode="decimal" placeholder="Valor do condomínio" className={fieldClass} /></FieldLabel>
     <FieldLabel label="IPTU" help="Valor de IPTU registrado como referência tributária do imóvel."><input name="iptu" defaultValue={String(metadata.iptu ?? "")} inputMode="decimal" placeholder="Valor do IPTU" className={fieldClass} /></FieldLabel>
     <FieldLabel label="Observações" help="Informações complementares para consulta; não alteram automaticamente os cálculos patrimoniais." className="md:col-span-2"><textarea name="observacoes" defaultValue={String(metadata.observacoes ?? "")} placeholder="Observações opcionais" className={fieldClass} rows={3} /></FieldLabel>
-    <FieldLabel label="Proprietários" help="Relaciona uma ou mais pessoas da família ao imóvel e define as participações patrimoniais registradas." className="md:col-span-2"><select name="owner_ids" multiple defaultValue={ownerIds} className={`${fieldClass} min-h-28`}>{people.map((person) => <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>)}</select><span className="mt-1 block text-xs font-normal text-slate-500">Use Ctrl ou Cmd para selecionar mais de uma pessoa.</span></FieldLabel>
+    <FieldLabel label="Proprietários e participação familiar" help="Marque os proprietários e informe o percentual de cada um. A soma pode ser inferior a 100% quando parte do imóvel pertence a terceiros, mas nunca pode exceder 100%." className="md:col-span-2"><div className="space-y-2 rounded-xl border border-slate-200 p-3">{people.map((person) => <div key={person.id} className="grid gap-2 sm:grid-cols-[1fr_10rem]"><label className="flex items-center gap-2 text-sm font-medium text-slate-700"><input type="checkbox" name="owner_ids" value={person.id} defaultChecked={ownerIds.includes(person.id)} />{person.first_name} {person.last_name}</label><input name={`ownership_percentage_${person.id}`} defaultValue={ownershipByPerson.get(person.id) ?? ""} inputMode="decimal" placeholder="Participação %" aria-label={`Participação de ${person.first_name} ${person.last_name}`} className={fieldClass}/></div>)}</div><span className="mt-1 block text-xs font-normal text-slate-500">Cadastros sem percentual permanecem sinalizados para revisão e não entram no total proporcional.</span></FieldLabel>
   </>;
 }
 
@@ -133,7 +142,7 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
     supabase
       .from("properties")
       .select(
-        "id, title, address, city, state, postal_code, property_type, registry_number, metadata, property_owners(person_id, people(first_name, last_name))"
+        "id, title, address, city, state, postal_code, property_type, registry_number, metadata, outstanding_debt, valuation_date, valuation_source, ownership_review_status, property_owners(person_id, ownership_percentage, people(first_name, last_name))"
       )
       .eq("family_id", family.id)
       .is("deleted_at", null)

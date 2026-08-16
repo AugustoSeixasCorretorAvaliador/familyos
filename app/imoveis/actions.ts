@@ -47,10 +47,19 @@ function toNumberOrNull(value: FormDataEntryValue | null) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function readOwnerIds(formData: FormData) {
-  return formData
+function readOwners(formData: FormData) {
+  const ownerIds = formData
     .getAll("owner_ids")
     .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+  const owners = ownerIds.map((personId) => ({
+    person_id: personId,
+    ownership_percentage: toNumberOrNull(formData.get(`ownership_percentage_${personId}`)),
+  }));
+  const knownTotal = owners.reduce((sum, owner) => sum + (owner.ownership_percentage ?? 0), 0);
+  if (owners.some((owner) => owner.ownership_percentage !== null && (owner.ownership_percentage < 0 || owner.ownership_percentage > 100)) || knownTotal > 100.0001) {
+    redirect("/imoveis?error=invalid_percentage");
+  }
+  return owners;
 }
 
 export async function createProperty(formData: FormData) {
@@ -77,6 +86,7 @@ export async function createProperty(formData: FormData) {
     observacoes: (formData.get("observacoes") as string | null)?.trim() ?? null,
   };
 
+  const owners = readOwners(formData);
   const { data: insertedProperty, error } = await supabase
     .from("properties")
     .insert({
@@ -90,6 +100,10 @@ export async function createProperty(formData: FormData) {
       registry_number: (formData.get("registry_number") as string | null)?.trim() || null,
       status: "active",
       metadata,
+      outstanding_debt: toNumberOrNull(formData.get("outstanding_debt")),
+      valuation_date: (formData.get("valuation_date") as string | null) || null,
+      valuation_source: (formData.get("valuation_source") as string | null)?.trim() || null,
+      ownership_review_status: owners.length > 0 && owners.every((owner) => owner.ownership_percentage !== null) ? "confirmed" : "review_required",
     })
     .select("id")
     .single();
@@ -104,12 +118,10 @@ export async function createProperty(formData: FormData) {
     );
   }
 
-  const ownerIds = readOwnerIds(formData);
-  if (ownerIds.length > 0) {
-    const rows = ownerIds.map((personId) => ({
+  if (owners.length > 0) {
+    const rows = owners.map((owner) => ({
       property_id: insertedProperty.id,
-      person_id: personId,
-      ownership_percentage: null,
+      ...owner,
     }));
     const { error: ownersError } = await supabase.from("property_owners").insert(rows);
     if (ownersError) {
@@ -165,6 +177,7 @@ export async function updateProperty(formData: FormData) {
     observacoes: (formData.get("observacoes") as string | null)?.trim() ?? null,
   };
 
+  const owners = readOwners(formData);
   const { data, error } = await supabase
     .from("properties")
     .update({
@@ -176,6 +189,10 @@ export async function updateProperty(formData: FormData) {
       property_type: (formData.get("property_type") as string | null)?.trim() || null,
       registry_number: (formData.get("registry_number") as string | null)?.trim() || null,
       metadata,
+      outstanding_debt: toNumberOrNull(formData.get("outstanding_debt")),
+      valuation_date: (formData.get("valuation_date") as string | null) || null,
+      valuation_source: (formData.get("valuation_source") as string | null)?.trim() || null,
+      ownership_review_status: owners.length > 0 && owners.every((owner) => owner.ownership_percentage !== null) ? "confirmed" : "review_required",
     })
     .eq("id", propertyId)
     .eq("family_id", family.id)
@@ -206,12 +223,10 @@ export async function updateProperty(formData: FormData) {
     );
   }
 
-  const ownerIds = readOwnerIds(formData);
-  if (ownerIds.length > 0) {
-    const rows = ownerIds.map((personId) => ({
+  if (owners.length > 0) {
+    const rows = owners.map((owner) => ({
       property_id: propertyId,
-      person_id: personId,
-      ownership_percentage: null,
+      ...owner,
     }));
     const { error: ownersError } = await supabase.from("property_owners").insert(rows);
     if (ownersError) {

@@ -77,7 +77,7 @@ async function loadPropertyPortfolio(
   const query = await context.supabase
     .from("properties")
     .select(
-      "id, title, address, city, state, metadata, property_owners(person_id, ownership_percentage, people(first_name, last_name))"
+      "id, title, address, city, state, metadata, outstanding_debt, valuation_date, valuation_source, property_owners(person_id, ownership_percentage, people(first_name, last_name))"
     )
     .eq("family_id", context.familyId)
     .is("deleted_at", null)
@@ -101,6 +101,9 @@ async function loadPropertyPortfolio(
         row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
           ? (row.metadata as Record<string, unknown>)
           : null,
+      outstandingDebt: row.outstanding_debt,
+      valuationDate: row.valuation_date,
+      valuationSource: row.valuation_source,
       owners: ownerRows.map((owner) => {
         const person = personFromRelation(owner.people);
         return {
@@ -193,9 +196,10 @@ export async function listFinancialAccounts(
       institution: redactSensitiveText(row.institution, 120),
       accountType: redactSensitiveText(row.account_type, 80),
       currency: redactSensitiveText(row.currency, 8) || "BRL",
-      balance: finiteNumber(metadata.saldo_atual) ?? finiteNumber(row.opening_balance),
-      balanceBasis: finiteNumber(metadata.saldo_atual) !== null ? "saldo_informado" : "saldo_inicial",
-      balanceUpdatedAt: metadata.data_atualizacao ?? null,
+      balance: finiteNumber(row.opening_balance),
+      balanceBasis: "saldo_inicial; consulte o resumo financeiro para o saldo atual pelo razao",
+      balanceUpdatedAt: row.opening_balance_date ?? null,
+      legacySnapshot: metadata.legacy_balance_snapshot ?? null,
       openingBalance: finiteNumber(row.opening_balance),
       openingBalanceDate: row.opening_balance_date ?? null,
     };
@@ -206,51 +210,19 @@ export async function listFinancialAccounts(
 export async function getFinancialSummary(
   context: ExecutiveToolContext
 ): Promise<ExecutiveToolResult> {
-  const accounts = await listFinancialAccounts(context);
-  if (!accounts.available || !accounts.data || typeof accounts.data !== "object") {
-    return accounts;
-  }
-  const items = (accounts.data as {
-    items?: Array<{ balance: number | null; currency?: string | null }>;
-  }).items ?? [];
-  const totals = new Map<string, { balance: number; accountCount: number }>();
-  for (const item of items) {
-    if (item.balance === null) continue;
-    const currency = item.currency?.trim() || "BRL";
-    const current = totals.get(currency) ?? { balance: 0, accountCount: 0 };
-    totals.set(currency, {
-      balance: current.balance + item.balance,
-      accountCount: current.accountCount + 1,
-    });
-  }
-  const accountsWithBalance = Array.from(totals.values()).reduce(
-    (sum, total) => sum + total.accountCount,
-    0
-  );
-  const withoutBalance = items.length - accountsWithBalance;
-  const totalsByCurrency = Array.from(totals.entries())
-    .map(([currency, total]) => ({
-      currency,
-      balance: Number(total.balance.toFixed(2)),
-      accountCount: total.accountCount,
-    }))
-    .sort((left, right) => left.currency.localeCompare(right.currency));
-  const brl = totalsByCurrency.find((total) => total.currency === "BRL");
+  const overview = await getFinancialOverview(context);
+  if (!overview.available || !overview.data || typeof overview.data !== "object") return overview;
+  const liquidity = (overview.data as { liquidity?: Record<string, unknown> }).liquidity ?? {};
   return result(context, {
-    accountCount: items.length,
-    accountsWithBalance,
-    accountsWithoutBalance: withoutBalance,
-    totalKnownBalance: brl?.balance ?? null,
-    totalKnownBalanceBRL: brl?.balance ?? null,
-    totalsByCurrency,
-    warnings: [
-      ...(withoutBalance > 0
-        ? [`${withoutBalance} conta(s) sem saldo informado; os totais são parciais.`]
-        : []),
-      ...(totalsByCurrency.some((total) => total.currency !== "BRL")
-        ? ["Os saldos em moedas diferentes são apresentados separadamente e não foram convertidos."]
-        : []),
-    ],
+    totalKnownBalance: liquidity.availableBalance ?? null,
+    totalKnownBalanceBRL: liquidity.availableBalance ?? null,
+    balanceBasis: "saldo_inicial_mais_razao_realizado",
+    openingBalance: liquidity.openingBalance ?? null,
+    realizedCashIn: liquidity.realizedCashIn ?? null,
+    realizedCashOut: liquidity.realizedCashOut ?? null,
+    asOfCompetence: liquidity.asOfCompetence ?? null,
+    asOfDate: liquidity.asOfDate ?? null,
+    warnings: (overview.data as { warnings?: string[] }).warnings ?? [],
   });
 }
 

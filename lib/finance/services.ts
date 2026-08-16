@@ -40,18 +40,21 @@ export async function getFinanceWorkspace(familyId: string, includeEntries = tru
     db.from("lease_owner_shares").select("*").eq("family_id", familyId).is("deleted_at", null).order("valid_from", { ascending: false }),
     db.from("investment_assets").select("*").eq("family_id", familyId).is("deleted_at", null).order("name"),
     db.from("investment_positions").select("*").eq("family_id", familyId).order("position_date", { ascending: false }),
+    db.from("exchange_rates").select("*").eq("family_id", familyId).order("rate_date", { ascending: false }),
+    db.from("data_integrity_audit").select("*").eq("family_id", familyId).order("executed_at", { ascending: false }).limit(50),
     db.from("financial_alert_rules").select("*").eq("family_id", familyId).is("deleted_at", null).order("name"),
     db.from("financial_entry_history").select("*").eq("family_id", familyId).order("changed_at", { ascending: false }).limit(500),
     db.from("people").select("id,first_name,last_name").eq("family_id", familyId).is("deleted_at", null).order("first_name"),
   ]);
-  const scopes = ["accounts", "categories", "cards", "recurrences", "installments", "invoices", "properties", "units", "leases", "shares", "assets", "positions", "alerts", "history", "people"];
+  const scopes = ["accounts", "categories", "cards", "recurrences", "installments", "invoices", "properties", "units", "leases", "shares", "assets", "positions", "exchange_rates", "integrity_audit", "alerts", "history", "people"];
   results.forEach((result, index) => throwIfError(result.error, scopes[index]));
-  const [accounts, categories, cards, recurrences, installments, invoices, properties, units, leases, shares, assets, positions, alerts, history, people] = results;
+  const [accounts, categories, cards, recurrences, installments, invoices, properties, units, leases, shares, assets, positions, exchangeRates, integrityAudit, alerts, history, people] = results;
   const entries = await entriesPromise;
   return {
     accounts: accounts.data ?? [], categories: categories.data ?? [], cards: cards.data ?? [], entries,
     recurrences: recurrences.data ?? [], installments: installments.data ?? [], invoices: invoices.data ?? [], properties: properties.data ?? [],
     units: units.data ?? [], leases: leases.data ?? [], shares: shares.data ?? [], assets: assets.data ?? [], positions: positions.data ?? [],
+    exchangeRates: exchangeRates.data ?? [], integrityAudit: integrityAudit.data ?? [],
     alerts: alerts.data ?? [], history: history.data ?? [], people: people.data ?? [],
   };
 }

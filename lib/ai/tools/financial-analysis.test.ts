@@ -148,6 +148,17 @@ describe("investment executive analysis", () => {
     ]);
     expect(summary.warnings.join(" ")).toContain("não foram convertidos");
   });
+
+  it("consolida em reais apenas a posição estrangeira com cotação confirmada", () => {
+    const asset = { id: "asset-eur", family_id: "family-1", name: "Euro", institution: "Banco", asset_type: "foreign_currency", currency: "EUR", active: true, deleted_at: null } as InvestmentAsset;
+    const position = { id: "position-eur", asset_id: asset.id, position_date: "2026-08-01", market_value: 500, native_market_value: 500, exchange_rate_to_brl: 6.3, market_value_brl: 3150, valuation_status: "confirmed", cost_amount: null } as InvestmentPosition;
+
+    const summary = summarizeInvestmentPortfolio([asset], [position]);
+
+    expect(summary.totalMarketValueBRL).toBe(3150);
+    expect(summary.items[0]).toMatchObject({ marketValue: 500, marketValueBRL: 3150, exchangeRateToBRL: 6.3 });
+    expect(summary.warnings).toHaveLength(0);
+  });
 });
 
 describe("rent adjustment analysis", () => {
@@ -215,5 +226,6 @@ describe("rent adjustment analysis", () => {
     expect(summary.vacancyMonthlyPotential).toBe(1000);
     expect(summary.averageVacantRent).toBe(1000);
     expect(summary.estimatedVacancyRatePercent).toBe(33.3);
+    expect(summary.physicalVacancyRatePercent).toBe(50);
   });
 });

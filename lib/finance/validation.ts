@@ -26,6 +26,17 @@ export function moneyValue(value: FormDataEntryValue | null, required = false) {
   return parsed;
 }
 
+export function positiveDecimalValue(value: FormDataEntryValue | null, options: { required?: boolean; maxDecimals?: number } = {}) {
+  const raw = textValue(value, options.required);
+  if (raw === null) return null;
+  const normalized = raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw;
+  const maxDecimals = options.maxDecimals ?? 8;
+  if (!new RegExp(`^\\d+(?:\\.\\d{1,${maxDecimals}})?$`).test(normalized)) throw new FinanceValidationError("invalid_number");
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed <= 0) throw new FinanceValidationError("invalid_number");
+  return parsed;
+}
+
 export function integerValue(value: FormDataEntryValue | null, options: { min: number; max: number; required?: boolean }) {
   const raw = textValue(value, options.required);
   if (raw === null) return null;

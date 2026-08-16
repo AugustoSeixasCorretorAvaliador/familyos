@@ -10,7 +10,7 @@ import { findCardCategoryId } from "@/lib/finance/card-category";
 import { generateMonthlyOccurrences, splitInstallments } from "@/lib/finance/domain";
 import { dayBeforeCompetence, recurrenceActivationPatch, recurrenceEntryPropagationPatch } from "@/lib/finance/recurrence";
 import { CARD_SETTLEMENT_ENTRY_TYPES, isCardSettlementEntry } from "@/lib/finance/summary";
-import { assertNoClientFamilyId, CATEGORY_TYPES, competenceValue, dateValue, ENTRY_STATUSES, ENTRY_TYPES, FinanceValidationError, integerValue, moneyValue, oneOf, optionalId, textValue, validatePercentage } from "@/lib/finance/validation";
+import { assertNoClientFamilyId, CATEGORY_TYPES, competenceValue, dateValue, ENTRY_STATUSES, ENTRY_TYPES, FinanceValidationError, integerValue, moneyValue, oneOf, optionalId, positiveDecimalValue, textValue, validatePercentage } from "@/lib/finance/validation";
 import { createClient } from "@/lib/supabase/server";
 import type { FinancialEntryInsert } from "@/lib/finance/types";
 
@@ -1058,9 +1058,32 @@ export async function updateProperty(formData: FormData) {
 
 export async function createLease(formData: FormData) {
   const context = await requireEditor();
-  try { assertNoClientFamilyId(formData); const { error } = await createClient().from("lease_contracts").insert({ family_id: context.family.id, created_by: context.user.id, property_id: textValue(formData.get("property_id"), true)!, unit_id: optionalId(formData, "unit_id"), tenant_person_id: optionalId(formData, "tenant_person_id"), principal_owner_person_id: optionalId(formData, "principal_owner_person_id"), start_date: dateValue(formData.get("start_date"), true)!, end_date: dateValue(formData.get("end_date")), base_rent: moneyValue(formData.get("base_rent"), true)!, charges_amount: moneyValue(formData.get("charges_amount")) ?? 0, adjustment_index: textValue(formData.get("adjustment_index")), next_adjustment_date: dateValue(formData.get("next_adjustment_date")), status: "active" }); if (error) throw error; }
+  try {
+    assertNoClientFamilyId(formData);
+    const adjustmentIndex = textValue(formData.get("adjustment_index"));
+    const adjustmentFrequencyMonths = integerValue(formData.get("adjustment_frequency_months"), { min: 1, max: 120 });
+    const nextAdjustmentDate = dateValue(formData.get("next_adjustment_date"));
+    const status = oneOf(formData.get("status") ?? "active", ["active", "vacant", "negotiating", "closed", "sold"] as const);
+    const { error } = await createClient().from("lease_contracts").insert({ family_id: context.family.id, created_by: context.user.id, property_id: textValue(formData.get("property_id"), true)!, unit_id: optionalId(formData, "unit_id"), tenant_person_id: optionalId(formData, "tenant_person_id"), principal_owner_person_id: optionalId(formData, "principal_owner_person_id"), start_date: dateValue(formData.get("start_date"), true)!, end_date: dateValue(formData.get("end_date")), base_rent: moneyValue(formData.get("base_rent"), true)!, charges_amount: moneyValue(formData.get("charges_amount")) ?? 0, adjustment_index: adjustmentIndex, adjustment_frequency_months: adjustmentFrequencyMonths, next_adjustment_date: nextAdjustmentDate, guarantee_type: textValue(formData.get("guarantee_type")), notes: textValue(formData.get("notes")), status, review_status: status !== "active" || Boolean(adjustmentIndex && adjustmentFrequencyMonths && nextAdjustmentDate) ? "confirmed" : "review_required" });
+    if (error) throw error;
+  }
   catch (error) { actionFailure(error, context, "create_lease", "properties"); }
   feedback("properties", "created");
+}
+
+export async function updateLease(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData);
+    const id = textValue(formData.get("id"), true)!;
+    const adjustmentIndex = textValue(formData.get("adjustment_index"));
+    const adjustmentFrequencyMonths = integerValue(formData.get("adjustment_frequency_months"), { min: 1, max: 120 });
+    const nextAdjustmentDate = dateValue(formData.get("next_adjustment_date"));
+    const status = oneOf(formData.get("status"), ["active", "vacant", "negotiating", "closed", "sold"] as const);
+    const { data, error } = await createClient().from("lease_contracts").update({ property_id: textValue(formData.get("property_id"), true)!, unit_id: optionalId(formData, "unit_id"), tenant_person_id: optionalId(formData, "tenant_person_id"), principal_owner_person_id: optionalId(formData, "principal_owner_person_id"), start_date: dateValue(formData.get("start_date"), true)!, end_date: dateValue(formData.get("end_date")), base_rent: moneyValue(formData.get("base_rent"), true)!, charges_amount: moneyValue(formData.get("charges_amount")) ?? 0, adjustment_index: adjustmentIndex, adjustment_frequency_months: adjustmentFrequencyMonths, next_adjustment_date: nextAdjustmentDate, guarantee_type: textValue(formData.get("guarantee_type")), notes: textValue(formData.get("notes")), status, review_status: status !== "active" || Boolean(adjustmentIndex && adjustmentFrequencyMonths && nextAdjustmentDate) ? "confirmed" : "review_required", updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    if (error || !data) throw error ?? new FinanceValidationError("not_found");
+  } catch (error) { actionFailure(error, context, "update_lease", "properties"); }
+  feedback("properties", "updated");
 }
 
 export async function createOwnerShare(formData: FormData) {
@@ -1072,7 +1095,7 @@ export async function createOwnerShare(formData: FormData) {
 
 export async function createInvestmentAsset(formData: FormData) {
   const context = await requireEditor();
-  try { assertNoClientFamilyId(formData); const { error } = await createClient().from("investment_assets").insert({ family_id: context.family.id, created_by: context.user.id, name: textValue(formData.get("name"), true)!, institution: textValue(formData.get("institution"), true)!, asset_type: textValue(formData.get("asset_type"), true)!, account_id: optionalId(formData, "account_id"), currency: "BRL" }); if (error) throw error; }
+  try { assertNoClientFamilyId(formData); const currency = textValue(formData.get("currency"), true)!.toUpperCase(); if (!/^[A-Z]{3}$/.test(currency)) throw new FinanceValidationError("invalid_value"); const { error } = await createClient().from("investment_assets").insert({ family_id: context.family.id, created_by: context.user.id, name: textValue(formData.get("name"), true)!, institution: textValue(formData.get("institution"), true)!, asset_type: textValue(formData.get("asset_type"), true)!, account_id: optionalId(formData, "account_id"), currency }); if (error) throw error; }
   catch (error) { actionFailure(error, context, "create_asset", "investments"); }
   feedback("investments", "created");
 }
@@ -1081,7 +1104,8 @@ export async function updateInvestmentAsset(formData: FormData) {
   const context = await requireEditor();
   try {
     assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!;
-    const { data, error } = await createClient().from("investment_assets").update({ name: textValue(formData.get("name"), true)!, institution: textValue(formData.get("institution"), true)!, asset_type: textValue(formData.get("asset_type"), true)!, account_id: optionalId(formData, "account_id"), updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
+    const currency = textValue(formData.get("currency"), true)!.toUpperCase(); if (!/^[A-Z]{3}$/.test(currency)) throw new FinanceValidationError("invalid_value");
+    const { data, error } = await createClient().from("investment_assets").update({ name: textValue(formData.get("name"), true)!, institution: textValue(formData.get("institution"), true)!, asset_type: textValue(formData.get("asset_type"), true)!, account_id: optionalId(formData, "account_id"), currency, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).select("id").maybeSingle();
     if (error || !data) throw error ?? new Error("not_found");
   } catch (error) { actionFailure(error, context, "update_asset", "investments"); }
   feedback("investments", "updated");
@@ -1089,9 +1113,38 @@ export async function updateInvestmentAsset(formData: FormData) {
 
 export async function createInvestmentPosition(formData: FormData) {
   const context = await requireEditor();
-  try { assertNoClientFamilyId(formData); const { error } = await createClient().from("investment_positions").upsert({ family_id: context.family.id, created_by: context.user.id, updated_by: context.user.id, asset_id: textValue(formData.get("asset_id"), true)!, position_date: dateValue(formData.get("position_date"), true)!, market_value: moneyValue(formData.get("market_value"), true)!, cost_amount: moneyValue(formData.get("cost_amount")), quantity: moneyValue(formData.get("quantity")), unit_price: moneyValue(formData.get("unit_price")) }, { onConflict: "asset_id,position_date" }); if (error) throw error; }
+  try {
+    assertNoClientFamilyId(formData);
+    const db = createClient();
+    const assetId = textValue(formData.get("asset_id"), true)!;
+    const nativeMarketValue = moneyValue(formData.get("native_market_value"), true)!;
+    const exchangeRateId = optionalId(formData, "exchange_rate_id");
+    const { data: asset, error: assetError } = await db.from("investment_assets").select("currency").eq("id", assetId).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
+    if (assetError || !asset) throw assetError ?? new FinanceValidationError("not_found");
+    let rate = asset.currency.trim().toUpperCase() === "BRL" ? 1 : null;
+    if (exchangeRateId) {
+      const { data: exchangeRate, error: rateError } = await db.from("exchange_rates").select("currency,rate_to_brl").eq("id", exchangeRateId).eq("family_id", context.family.id).maybeSingle();
+      if (rateError || !exchangeRate || exchangeRate.currency.trim() !== asset.currency.trim()) throw rateError ?? new FinanceValidationError("invalid_value");
+      rate = exchangeRate.rate_to_brl;
+    }
+    const marketValueBrl = rate === null ? null : Number((nativeMarketValue * rate).toFixed(2));
+    const { error } = await db.from("investment_positions").upsert({ family_id: context.family.id, created_by: context.user.id, updated_by: context.user.id, asset_id: assetId, position_date: dateValue(formData.get("position_date"), true)!, market_value: nativeMarketValue, native_market_value: nativeMarketValue, exchange_rate_id: exchangeRateId, exchange_rate_to_brl: rate, market_value_brl: marketValueBrl, valuation_status: marketValueBrl === null ? "review_required" : "confirmed", valuation_notes: marketValueBrl === null ? "Cotacao pendente para consolidacao em BRL." : null, cost_amount: moneyValue(formData.get("cost_amount")), quantity: moneyValue(formData.get("quantity")), unit_price: moneyValue(formData.get("unit_price")) }, { onConflict: "asset_id,position_date" });
+    if (error) throw error;
+  }
   catch (error) { actionFailure(error, context, "create_position", "investments"); }
   feedback("investments", "created");
+}
+
+export async function createExchangeRate(formData: FormData) {
+  const context = await requireEditor();
+  try {
+    assertNoClientFamilyId(formData);
+    const currency = textValue(formData.get("currency"), true)!.toUpperCase();
+    if (!/^[A-Z]{3}$/.test(currency) || currency === "BRL") throw new FinanceValidationError("invalid_value");
+    const { error } = await createClient().from("exchange_rates").upsert({ family_id: context.family.id, currency, rate_date: dateValue(formData.get("rate_date"), true)!, rate_to_brl: positiveDecimalValue(formData.get("rate_to_brl"), { required: true, maxDecimals: 8 })!, source: oneOf(formData.get("source") ?? "manual", ["manual", "BCB_PTAX"] as const), source_reference: textValue(formData.get("source_reference")), created_by: context.user.id, updated_by: context.user.id }, { onConflict: "family_id,currency,rate_date,source" });
+    if (error) throw error;
+  } catch (error) { actionFailure(error, context, "create_exchange_rate", "investments"); }
+  feedback("investments", "exchange_rate_saved");
 }
 
 export async function archiveFinanceRecord(formData: FormData) {

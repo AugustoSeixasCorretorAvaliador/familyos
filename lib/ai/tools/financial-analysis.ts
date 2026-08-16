@@ -244,7 +244,8 @@ export function summarizeInvestmentPortfolio(
     .filter((asset) => activeAssetIds.has(asset.id))
     .map((asset) => {
       const position = latestByAsset.get(asset.id);
-      const marketValue = position?.market_value ?? null;
+      const marketValue = position?.native_market_value ?? position?.market_value ?? null;
+      const marketValueBRL = position?.market_value_brl ?? ((asset.currency?.trim() || "BRL") === "BRL" ? marketValue : null);
       const costAmount = position?.cost_amount ?? null;
       const gainAmount = marketValue !== null && costAmount !== null ? marketValue - costAmount : null;
       return {
@@ -254,6 +255,9 @@ export function summarizeInvestmentPortfolio(
         currency: asset.currency?.trim() || "BRL",
         positionDate: position?.position_date ?? null,
         marketValue,
+        marketValueBRL,
+        exchangeRateToBRL: position?.exchange_rate_to_brl ?? null,
+        valuationStatus: position?.valuation_status ?? "review_required",
         costAmount,
         gainAmount: gainAmount === null ? null : money(gainAmount),
         gainPercent:
@@ -278,13 +282,16 @@ export function summarizeInvestmentPortfolio(
     };
   });
   const brl = totalsByCurrency.find((total) => total.currency === "BRL");
+  const convertedValues = items.flatMap((item) => item.marketValueBRL === null ? [] : [item.marketValueBRL]);
+  const totalMarketValueBRL = convertedValues.length ? money(convertedValues.reduce((sum, value) => sum + value, 0)) : null;
+  const unconvertedForeign = items.filter((item) => item.currency !== "BRL" && item.marketValue !== null && item.marketValueBRL === null).length;
 
   return {
     assetCount: items.length,
     assetsWithPosition: items.filter((item) => item.marketValue !== null).length,
     totalsByCurrency,
-    totalMarketValue: brl?.marketValue ?? null,
-    totalMarketValueBRL: brl?.marketValue ?? null,
+    totalMarketValue: totalMarketValueBRL,
+    totalMarketValueBRL,
     totalCostAmount: brl?.costAmount ?? null,
     totalCostAmountBRL: brl?.costAmount ?? null,
     totalGainAmount: brl?.gainAmount ?? null,
@@ -294,8 +301,8 @@ export function summarizeInvestmentPortfolio(
       ...(items.filter((item) => item.marketValue === null).length
         ? ["Há investimentos ativos sem posição de mercado cadastrada; os totais são parciais."]
         : []),
-      ...(currencies.some((currency) => currency !== "BRL")
-        ? ["Valores em moedas diferentes são apresentados separadamente e não foram convertidos por falta de cotação cadastrada."]
+      ...(unconvertedForeign
+        ? [`${unconvertedForeign} posição(ões) em moeda estrangeira não foram convertidos por falta de valor nativo e cotação confirmados; foram excluídas do total em reais.`]
         : []),
     ],
   };
@@ -352,6 +359,8 @@ export function summarizeRentAdjustments(
     potentialGrossRent,
     estimatedVacancyRatePercent:
       potentialGrossRent > 0 ? Number(((vacancyMonthlyPotential / potentialGrossRent) * 100).toFixed(1)) : null,
+    physicalVacancyRatePercent:
+      relevant.length > 0 ? Number(((vacant.length / relevant.length) * 100).toFixed(1)) : null,
     overdueAdjustmentCount: items.filter((item) => item.adjustmentStatus === "atrasado").length,
     adjustmentsNext180DaysCount: items.filter(
       (item) => item.adjustmentStatus === "proximos_180_dias"

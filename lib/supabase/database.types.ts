@@ -819,6 +819,53 @@ export type Database = {
           },
         ]
       }
+      data_integrity_audit: {
+        Row: {
+          details: Json
+          entity_type: string
+          executed_at: string
+          executed_by: string | null
+          family_id: string
+          id: string
+          migration_key: string
+          source_id: string | null
+          status: string
+          target_id: string | null
+        }
+        Insert: {
+          details?: Json
+          entity_type: string
+          executed_at?: string
+          executed_by?: string | null
+          family_id: string
+          id?: string
+          migration_key: string
+          source_id?: string | null
+          status?: string
+          target_id?: string | null
+        }
+        Update: {
+          details?: Json
+          entity_type?: string
+          executed_at?: string
+          executed_by?: string | null
+          family_id?: string
+          id?: string
+          migration_key?: string
+          source_id?: string | null
+          status?: string
+          target_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "data_integrity_audit_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       documents: {
         Row: {
           ai_provider: string | null
@@ -1455,6 +1502,56 @@ export type Database = {
             columns: ["responsible_person_id"]
             isOneToOne: false
             referencedRelation: "people"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exchange_rates: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          currency: string
+          family_id: string
+          id: string
+          rate_date: string
+          rate_to_brl: number
+          source: string
+          source_reference: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          currency: string
+          family_id: string
+          id?: string
+          rate_date: string
+          rate_to_brl: number
+          source?: string
+          source_reference?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          family_id?: string
+          id?: string
+          rate_date?: string
+          rate_to_brl?: number
+          source?: string
+          source_reference?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exchange_rates_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "families"
             referencedColumns: ["id"]
           },
         ]
@@ -2114,42 +2211,60 @@ export type Database = {
           cost_amount: number | null
           created_at: string
           created_by: string | null
+          exchange_rate_id: string | null
+          exchange_rate_to_brl: number | null
           family_id: string
           id: string
           market_value: number
+          market_value_brl: number | null
+          native_market_value: number | null
           position_date: string
           quantity: number | null
           unit_price: number | null
           updated_at: string
           updated_by: string | null
+          valuation_notes: string | null
+          valuation_status: string
         }
         Insert: {
           asset_id: string
           cost_amount?: number | null
           created_at?: string
           created_by?: string | null
+          exchange_rate_id?: string | null
+          exchange_rate_to_brl?: number | null
           family_id: string
           id?: string
           market_value: number
+          market_value_brl?: number | null
+          native_market_value?: number | null
           position_date: string
           quantity?: number | null
           unit_price?: number | null
           updated_at?: string
           updated_by?: string | null
+          valuation_notes?: string | null
+          valuation_status?: string
         }
         Update: {
           asset_id?: string
           cost_amount?: number | null
           created_at?: string
           created_by?: string | null
+          exchange_rate_id?: string | null
+          exchange_rate_to_brl?: number | null
           family_id?: string
           id?: string
           market_value?: number
+          market_value_brl?: number | null
+          native_market_value?: number | null
           position_date?: string
           quantity?: number | null
           unit_price?: number | null
           updated_at?: string
           updated_by?: string | null
+          valuation_notes?: string | null
+          valuation_status?: string
         }
         Relationships: [
           {
@@ -2158,6 +2273,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "investment_assets"
             referencedColumns: ["id", "family_id"]
+          },
+          {
+            foreignKeyName: "investment_positions_exchange_rate_family_fkey"
+            columns: ["exchange_rate_id", "family_id"]
+            isOneToOne: false
+            referencedRelation: "exchange_rates"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "investment_positions_family_id_fkey"
@@ -2186,6 +2308,7 @@ export type Database = {
           notes: string | null
           principal_owner_person_id: string | null
           property_id: string
+          review_status: string
           start_date: string
           status: string
           tenant_person_id: string | null
@@ -2210,6 +2333,7 @@ export type Database = {
           notes?: string | null
           principal_owner_person_id?: string | null
           property_id: string
+          review_status?: string
           start_date: string
           status?: string
           tenant_person_id?: string | null
@@ -2234,6 +2358,7 @@ export type Database = {
           notes?: string | null
           principal_owner_person_id?: string | null
           property_id?: string
+          review_status?: string
           start_date?: string
           status?: string
           tenant_person_id?: string | null
@@ -2788,6 +2913,8 @@ export type Database = {
           is_demo: boolean
           metadata: Json
           municipal_registration: string | null
+          outstanding_debt: number | null
+          ownership_review_status: string
           postal_code: string | null
           property_type: string | null
           registry_number: string | null
@@ -2796,6 +2923,8 @@ export type Database = {
           title: string
           updated_at: string
           updated_by: string | null
+          valuation_date: string | null
+          valuation_source: string | null
         }
         Insert: {
           address: string
@@ -2809,6 +2938,8 @@ export type Database = {
           is_demo?: boolean
           metadata?: Json
           municipal_registration?: string | null
+          outstanding_debt?: number | null
+          ownership_review_status?: string
           postal_code?: string | null
           property_type?: string | null
           registry_number?: string | null
@@ -2817,6 +2948,8 @@ export type Database = {
           title: string
           updated_at?: string
           updated_by?: string | null
+          valuation_date?: string | null
+          valuation_source?: string | null
         }
         Update: {
           address?: string
@@ -2830,6 +2963,8 @@ export type Database = {
           is_demo?: boolean
           metadata?: Json
           municipal_registration?: string | null
+          outstanding_debt?: number | null
+          ownership_review_status?: string
           postal_code?: string | null
           property_type?: string | null
           registry_number?: string | null
@@ -2838,6 +2973,8 @@ export type Database = {
           title?: string
           updated_at?: string
           updated_by?: string | null
+          valuation_date?: string | null
+          valuation_source?: string | null
         }
         Relationships: [
           {
