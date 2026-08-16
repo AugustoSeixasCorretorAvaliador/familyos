@@ -7,6 +7,7 @@ import {
   finalizeArchivedPersonDocument,
 } from "@/app/documentos/actions";
 import { ExpandableCreateForm } from "@/app/components/expandable-create-form";
+import { FieldLabel } from "@/app/components/field-label";
 import { SubmitButton } from "@/app/components/submit-button";
 import { getActionErrorMessage } from "@/lib/action-feedback";
 import {
@@ -17,6 +18,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 
 const DOCUMENTS_BUCKET = "family-documents";
+const fieldClass = "block w-full rounded-xl border border-slate-300 px-3 py-2";
 
 type PersonOption = {
   id: string;
@@ -182,53 +184,25 @@ export function DocumentUploadForm({
       onSubmitCapture={handleSubmit}
       formClassName="grid grid-cols-1 gap-4 md:grid-cols-2"
     >
-      <input
-        name="file"
-        type="file"
-        required={archiveWithoutOcr}
-        accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/tif"
-        className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2"
-      />
+      <FieldLabel label="Arquivo" help="PDF ou imagem enviado ao armazenamento privado. Quando o OCR estiver ativo, o sistema tenta extrair os campos para revisão." className="md:col-span-2">
+        <input name="file" type="file" required={archiveWithoutOcr} accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/tif" className={fieldClass} />
+      </FieldLabel>
       <p className="text-xs text-slate-500 md:col-span-2">
         Envie ou fotografe primeiro para usar o OCR. Sem arquivo, informe ao
         menos o título e salve manualmente. Formatos: PDF, PNG, JPEG, WEBP,
         TIFF. Limite: 20 MB.
       </p>
-      <label className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950 md:col-span-2">
-        <input
-          name="archive_without_ocr"
-          type="checkbox"
-          checked={archiveWithoutOcr}
-          onChange={(event) => {
-            setArchiveWithoutOcr(event.target.checked);
-            setError(null);
-          }}
-          className="mt-0.5 h-4 w-4 rounded border-emerald-400"
-        />
-        <span>
-          <strong className="block">Somente arquivar no histórico</strong>
-          Marque antes de clicar em Enviar e guardar. O arquivo será enviado
-          diretamente ao armazenamento privado e permanecerá vinculado à
-          pessoa ou ao pet selecionado para consulta ou processamento
-          posterior.
+      <FieldLabel label="Modo de processamento" help="Marcado: apenas arquiva o arquivo. Desmarcado: executa o fluxo inteligente de OCR e revisão." className="md:col-span-2">
+        <span className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950">
+          <input name="archive_without_ocr" type="checkbox" checked={archiveWithoutOcr} onChange={(event) => { setArchiveWithoutOcr(event.target.checked); setError(null); }} className="mt-0.5 h-4 w-4 rounded border-emerald-400" />
+          <span><strong className="block">Somente arquivar no histórico</strong>O arquivo será guardado e vinculado à pessoa ou ao pet, sem leitura automática.</span>
         </span>
-      </label>
-      <input
-        name="title"
-        required={archiveWithoutOcr}
-        placeholder={
-          archiveWithoutOcr
-            ? "Título (obrigatório para arquivar)"
-            : "Título (opcional antes do OCR)"
-        }
-        className="rounded-xl border border-slate-300 px-3 py-2"
-      />
-      <select
-        name="document_type"
-        required={archiveWithoutOcr}
-        aria-label="Tipo do documento"
-        className="rounded-xl border border-slate-300 px-3 py-2"
-      >
+      </FieldLabel>
+      <FieldLabel label="Título" help="Nome usado para localizar o documento nas listas, pesquisa, vínculos e timeline.">
+        <input name="title" required={archiveWithoutOcr} placeholder={archiveWithoutOcr ? "Título (obrigatório)" : "Título (opcional antes do OCR)"} className={fieldClass} />
+      </FieldLabel>
+      <FieldLabel label="Tipo de documento" help="Classifica o arquivo e orienta organização, filtros, validações e extração inteligente.">
+      <select name="document_type" aria-label="Tipo do documento" required={archiveWithoutOcr} className={fieldClass}>
         <option value="">
           {archiveWithoutOcr ? "Tipo (obrigatório)" : "Tipo"}
         </option>
@@ -238,12 +212,9 @@ export function DocumentUploadForm({
           </option>
         ))}
       </select>
-      <select
-        name="owner_person_id"
-        required={archiveWithoutOcr}
-        aria-label="Titular pessoa ou pet"
-        className="rounded-xl border border-slate-300 px-3 py-2"
-      >
+      </FieldLabel>
+      <FieldLabel label="Titular: pessoa ou pet" help="Vincula o documento ao cadastro correspondente para aparecer no histórico e nos módulos relacionados.">
+      <select name="owner_person_id" aria-label="Titular pessoa ou pet" required={archiveWithoutOcr} className={fieldClass}>
         <option value="">
           {archiveWithoutOcr
             ? "Titular: pessoa ou pet (obrigatório)"
@@ -256,40 +227,13 @@ export function DocumentUploadForm({
           </option>
         ))}
       </select>
-      <input
-        name="document_number"
-        placeholder="Número"
-        className="rounded-xl border border-slate-300 px-3 py-2"
-      />
-      <input
-        name="issuing_authority"
-        placeholder="Órgão emissor"
-        className="rounded-xl border border-slate-300 px-3 py-2"
-      />
-      <input
-        name="country"
-        defaultValue="Brasil"
-        placeholder="País"
-        className="rounded-xl border border-slate-300 px-3 py-2"
-      />
-      <input
-        name="issue_date"
-        type="date"
-        aria-label="Data de emissão"
-        className="rounded-xl border border-slate-300 px-3 py-2"
-      />
-      <input
-        name="expiration_date"
-        type="date"
-        aria-label="Data de validade"
-        className="rounded-xl border border-slate-300 px-3 py-2"
-      />
-      <textarea
-        name="observacoes"
-        placeholder="Observações"
-        className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2"
-        rows={3}
-      />
+      </FieldLabel>
+      <FieldLabel label="Número" help="Identificador oficial do documento usado para conferência e pesquisa."><input name="document_number" placeholder="Número do documento" className={fieldClass} /></FieldLabel>
+      <FieldLabel label="Órgão emissor" help="Instituição que emitiu o documento, preservada para validação e consulta."><input name="issuing_authority" placeholder="Órgão emissor" className={fieldClass} /></FieldLabel>
+      <FieldLabel label="País" help="País de emissão usado para contextualizar regras e identificação documental."><input name="country" defaultValue="Brasil" placeholder="País" className={fieldClass} /></FieldLabel>
+      <FieldLabel label="Data de emissão" help="Data em que o documento passou a ser válido e referência para seu histórico."><input name="issue_date" type="date" className={fieldClass} /></FieldLabel>
+      <FieldLabel label="Data de validade" help="Prazo usado para acompanhar vencimentos e alertas documentais."><input name="expiration_date" type="date" className={fieldClass} /></FieldLabel>
+      <FieldLabel label="Observações" help="Informações complementares para consulta; não substituem o conteúdo do arquivo." className="md:col-span-2"><textarea name="observacoes" placeholder="Observações opcionais" className={fieldClass} rows={3} /></FieldLabel>
       {error && (
         <p
           role="alert"

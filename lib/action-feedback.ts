@@ -8,6 +8,8 @@ export type ActionErrorCode =
   | "multiple_files_require_archive"
   | "invalid_amount"
   | "permission_denied"
+  | "self_access_protected"
+  | "last_admin_required"
   | "schema_missing"
   | "schema_mismatch"
   | "duplicate"
@@ -42,6 +44,10 @@ const ERROR_MESSAGES: Record<ActionErrorCode, string> = {
     "Para enviar varios arquivos de uma vez, marque Somente arquivar no historico.",
   invalid_amount: "Informe um valor monetario valido, com no maximo duas casas decimais.",
   permission_denied: "A politica de seguranca nao permite esta operacao para o seu perfil.",
+  self_access_protected:
+    "Seu proprio nivel de acesso nao pode ser alterado nesta tela, evitando bloqueio acidental.",
+  last_admin_required:
+    "A familia precisa manter ao menos um administrador ativo.",
   schema_missing: "O modulo ainda nao foi aplicado ao banco de dados.",
   schema_mismatch: "A estrutura do modulo esta divergente do banco de dados.",
   duplicate: "Este registro ja existe.",

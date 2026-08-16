@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { ExpandableCreateForm } from "@/app/components/expandable-create-form";
+import { FieldLabel } from "@/app/components/field-label";
 import { MainNav } from "@/app/components/main-nav";
 import { SubmitButton } from "@/app/components/submit-button";
 import { createLegalCase, deleteLegalCase, updateLegalCase } from "@/app/processos/actions";
@@ -37,6 +38,7 @@ type LegalCaseRow = {
 };
 
 const CASE_STATUSES = ["Ativo", "Aguardando", "Suspenso", "Concluido", "Arquivado"];
+const fieldClass = "block w-full rounded-xl border border-slate-300 px-3 py-2";
 
 function formatDate(date: string | null) {
   if (!date) return "-";
@@ -120,28 +122,28 @@ export default async function ProcessosPage({ searchParams }: PageProps) {
           outcome={searchParams.error ? "error" : searchParams.success ? "success" : null}
           formClassName="grid grid-cols-1 gap-3 md:grid-cols-2"
         >
-            <input name="title" required placeholder="Titulo" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="case_number" placeholder="Numero do processo" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="case_type" placeholder="Tipo" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <select name="person_id" className="rounded-xl border border-slate-300 px-3 py-2">
+            <FieldLabel label="Título" help="Nome amigável usado para identificar o processo na lista, tarefas, timeline e relacionamentos."><input name="title" required placeholder="Título do processo" className={fieldClass} /></FieldLabel>
+            <FieldLabel label="Número do processo" help="Identificador oficial usado para pesquisa, conferência e acompanhamento jurídico."><input name="case_number" placeholder="Número do processo" className={fieldClass} /></FieldLabel>
+            <FieldLabel label="Tipo" help="Classifica a natureza do processo, como judicial, administrativo, cível ou trabalhista."><input name="case_type" placeholder="Tipo de processo" className={fieldClass} /></FieldLabel>
+            <FieldLabel label="Pessoa relacionada" help="Vincula o processo a uma pessoa da família para histórico e relacionamentos."><select name="person_id" className={fieldClass}>
               <option value="">Pessoa relacionada</option>
               {people.map((person) => (
                 <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>
               ))}
-            </select>
-            <input name="court" placeholder="Tribunal ou orgao" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="start_date" type="date" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="lawyer" placeholder="Advogado" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="claim_value" placeholder="Valor da causa" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="expected_value" placeholder="Valor esperado" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <select name="status" defaultValue="Ativo" className="rounded-xl border border-slate-300 px-3 py-2">
+            </select></FieldLabel>
+            <FieldLabel label="Tribunal ou órgão" help="Instituição responsável pela tramitação e referência do local de acompanhamento."><input name="court" placeholder="Tribunal ou órgão" className={fieldClass} /></FieldLabel>
+            <FieldLabel label="Data de início" help="Marco inicial usado para o histórico temporal do processo."><input name="start_date" type="date" className={fieldClass} /></FieldLabel>
+            <FieldLabel label="Advogado" help="Profissional responsável ou contato jurídico associado ao processo."><input name="lawyer" placeholder="Nome do advogado" className={fieldClass} /></FieldLabel>
+            <FieldLabel label="Valor da causa" help="Valor oficial atribuído ao processo para referência jurídica e patrimonial."><input name="claim_value" inputMode="decimal" placeholder="Valor da causa" className={fieldClass} /></FieldLabel>
+            <FieldLabel label="Valor esperado" help="Estimativa interna de resultado financeiro, exibida no resumo do processo."><input name="expected_value" inputMode="decimal" placeholder="Valor esperado" className={fieldClass} /></FieldLabel>
+            <FieldLabel label="Status" help="Representa a situação atual e permite filtrar processos ativos, aguardando, suspensos, concluídos ou arquivados."><select name="status" defaultValue="Ativo" className={fieldClass}>
               {CASE_STATUSES.map((status) => (
                 <option key={status} value={status}>{status}</option>
               ))}
-            </select>
-            <textarea name="last_update" rows={2} placeholder="Ultimo andamento" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
-            <input name="last_update_date" type="date" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <textarea name="notes" rows={2} placeholder="Observacoes" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
+            </select></FieldLabel>
+            <FieldLabel label="Último andamento" help="Resumo da movimentação mais recente para acompanhamento operacional do processo." className="md:col-span-2"><textarea name="last_update" rows={2} placeholder="Descrição do último andamento" className={fieldClass} /></FieldLabel>
+            <FieldLabel label="Data do último andamento" help="Data da movimentação mais recente usada no acompanhamento cronológico."><input name="last_update_date" type="date" className={fieldClass} /></FieldLabel>
+            <FieldLabel label="Observações" help="Informações complementares para consulta, sem alterar valores ou status automaticamente." className="md:col-span-2"><textarea name="notes" rows={2} placeholder="Observações opcionais" className={fieldClass} /></FieldLabel>
             <div className="md:col-span-2">
               <SubmitButton
                 label="Salvar processo"

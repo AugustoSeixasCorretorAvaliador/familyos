@@ -1,11 +1,12 @@
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { ExpandableCreateForm } from "@/app/components/expandable-create-form";
+import { FieldLabel } from "@/app/components/field-label";
 import { MainNav } from "@/app/components/main-nav";
 import { SubmitButton } from "@/app/components/submit-button";
 import { createTask, deleteTask, toggleTaskStatus, updateTask } from "@/app/tarefas/actions";
 import { getActionErrorMessage } from "@/lib/action-feedback";
-import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
+import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
@@ -43,6 +44,79 @@ type TaskRow = {
 
 const PRIORITIES = ["Baixa", "Media", "Alta", "Urgente"];
 const STATUSES = ["A fazer", "Em andamento", "Aguardando terceiro", "Concluida", "Cancelada"];
+const fieldClass = "block w-full rounded-xl border border-slate-300 px-3 py-2";
+
+function TaskFields({
+  task,
+  people,
+  properties,
+  documents,
+  legalCases,
+}: {
+  task?: TaskRow;
+  people: PersonOption[];
+  properties: PropertyOption[];
+  documents: DocumentOption[];
+  legalCases: LegalCaseOption[];
+}) {
+  return (
+    <>
+      <FieldLabel label="Título" help="Nome principal usado na lista, pesquisa, dashboard e timeline da tarefa.">
+        <input name="title" required defaultValue={task?.title ?? ""} placeholder="Título da tarefa" className={fieldClass} />
+      </FieldLabel>
+      <FieldLabel label="Categoria" help="Agrupa tarefas semelhantes para organização e análise, sem alterar prioridade ou prazo.">
+        <input name="category" defaultValue={task?.category ?? ""} placeholder="Ex.: Financeiro, Saúde" className={fieldClass} />
+      </FieldLabel>
+      <FieldLabel label="Responsável" help="Pessoa encarregada de executar a tarefa e usada nos filtros por responsabilidade.">
+        <select name="responsible_person_id" defaultValue={task?.responsible_person_id ?? ""} className={fieldClass}>
+          <option value="">Sem responsável definido</option>
+          {people.map((person) => <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>)}
+        </select>
+      </FieldLabel>
+      <FieldLabel label="Prioridade" help="Define a urgência operacional e ajuda a destacar o que deve ser tratado primeiro.">
+        <select name="priority" defaultValue={task?.priority ?? "Media"} className={fieldClass}>
+          {PRIORITIES.map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+        </select>
+      </FieldLabel>
+      <FieldLabel label="Status" help="Representa a etapa atual da tarefa e determina se ela continua pendente ou foi concluída/cancelada.">
+        <select name="status" defaultValue={task?.status ?? "A fazer"} className={fieldClass}>
+          {STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
+        </select>
+      </FieldLabel>
+      <FieldLabel label="Prazo" help="Data limite usada para alertas e para identificar automaticamente tarefas vencidas.">
+        <input name="due_date" type="date" defaultValue={task?.due_date ?? ""} className={fieldClass} />
+      </FieldLabel>
+      <FieldLabel label="Pessoa relacionada" help="Vincula a tarefa a alguém da família sem torná-lo necessariamente o responsável pela execução.">
+        <select name="related_person_id" defaultValue={task?.related_person_id ?? ""} className={fieldClass}>
+          <option value="">Sem pessoa relacionada</option>
+          {people.map((person) => <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>)}
+        </select>
+      </FieldLabel>
+      <FieldLabel label="Imóvel relacionado" help="Conecta a tarefa ao imóvel correspondente para rastreabilidade patrimonial.">
+        <select name="related_property_id" defaultValue={task?.related_property_id ?? ""} className={fieldClass}>
+          <option value="">Sem imóvel relacionado</option>
+          {properties.map((property) => <option key={property.id} value={property.id}>{property.title}</option>)}
+        </select>
+      </FieldLabel>
+      <FieldLabel label="Documento relacionado" help="Conecta a tarefa a um documento específico para facilitar acompanhamento e consulta.">
+        <select name="related_document_id" defaultValue={task?.related_document_id ?? ""} className={fieldClass}>
+          <option value="">Sem documento relacionado</option>
+          {documents.map((document) => <option key={document.id} value={document.id}>{document.title}</option>)}
+        </select>
+      </FieldLabel>
+      <FieldLabel label="Processo relacionado" help="Vincula a tarefa a um processo jurídico ou administrativo existente.">
+        <select name="related_legal_case_id" defaultValue={task?.related_legal_case_id ?? ""} className={fieldClass}>
+          <option value="">Sem processo relacionado</option>
+          {legalCases.map((legalCase) => <option key={legalCase.id} value={legalCase.id}>{legalCase.title}</option>)}
+        </select>
+      </FieldLabel>
+      <FieldLabel label="Descrição" help="Detalha o que precisa ser feito; serve como orientação e histórico, sem mudar cálculos de prazo.
+" className="md:col-span-2">
+        <textarea name="description" rows={3} defaultValue={task?.description ?? ""} placeholder="Detalhes e orientações" className={fieldClass} />
+      </FieldLabel>
+    </>
+  );
+}
 
 function formatDate(date: string | null) {
   if (!date) return "-";
@@ -104,6 +178,7 @@ export default async function TarefasPage({ searchParams }: PageProps) {
   const properties = (propertiesRes.data ?? []) as PropertyOption[];
   const documents = (documentsRes.data ?? []) as DocumentOption[];
   const legalCases = (legalCasesRes.data ?? []) as LegalCaseOption[];
+  const canEdit = canEditFamily(context);
 
   let tasks = ((tasksRes.data ?? []) as TaskRow[]).map((task) => ({
     ...task,
@@ -145,7 +220,7 @@ export default async function TarefasPage({ searchParams }: PageProps) {
           </section>
         )}
 
-        <ExpandableCreateForm
+        {canEdit ? <ExpandableCreateForm
           id="create-task"
           title="Cadastrar tarefa"
           buttonLabel="NOVA TAREFA"
@@ -153,57 +228,18 @@ export default async function TarefasPage({ searchParams }: PageProps) {
           outcome={searchParams.error ? "error" : searchParams.success ? "success" : null}
           formClassName="grid grid-cols-1 gap-3 md:grid-cols-2"
         >
-            <input name="title" required placeholder="Titulo" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="category" placeholder="Categoria" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <select name="responsible_person_id" className="rounded-xl border border-slate-300 px-3 py-2">
-              <option value="">Responsavel</option>
-              {people.map((person) => (
-                <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>
-              ))}
-            </select>
-            <select name="priority" defaultValue="Media" className="rounded-xl border border-slate-300 px-3 py-2">
-              {PRIORITIES.map((priority) => (
-                <option key={priority} value={priority}>{priority}</option>
-              ))}
-            </select>
-            <select name="status" defaultValue="A fazer" className="rounded-xl border border-slate-300 px-3 py-2">
-              {STATUSES.map((status) => (
-                <option key={status} value={status}>{status}</option>
-              ))}
-            </select>
-            <input name="due_date" type="date" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <select name="related_person_id" className="rounded-xl border border-slate-300 px-3 py-2">
-              <option value="">Pessoa relacionada</option>
-              {people.map((person) => (
-                <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>
-              ))}
-            </select>
-            <select name="related_property_id" className="rounded-xl border border-slate-300 px-3 py-2">
-              <option value="">Imovel relacionado</option>
-              {properties.map((property) => (
-                <option key={property.id} value={property.id}>{property.title}</option>
-              ))}
-            </select>
-            <select name="related_document_id" className="rounded-xl border border-slate-300 px-3 py-2">
-              <option value="">Documento relacionado</option>
-              {documents.map((document) => (
-                <option key={document.id} value={document.id}>{document.title}</option>
-              ))}
-            </select>
-            <select name="related_legal_case_id" className="rounded-xl border border-slate-300 px-3 py-2">
-              <option value="">Processo relacionado</option>
-              {legalCases.map((legalCase) => (
-                <option key={legalCase.id} value={legalCase.id}>{legalCase.title}</option>
-              ))}
-            </select>
-            <textarea name="description" rows={3} placeholder="Descricao" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
+            <TaskFields people={people} properties={properties} documents={documents} legalCases={legalCases} />
             <div className="md:col-span-2">
               <SubmitButton
                 label="Salvar tarefa"
                 className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
               />
             </div>
-        </ExpandableCreateForm>
+        </ExpandableCreateForm> : (
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm">
+            Seu perfil possui acesso somente para consulta.
+          </section>
+        )}
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">Filtros</h2>
@@ -252,61 +288,18 @@ export default async function TarefasPage({ searchParams }: PageProps) {
                   </summary>
 
                   <div className="mt-4 space-y-3">
-                    <form action={updateTask} className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {canEdit && <form action={updateTask} className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <input type="hidden" name="id" value={task.id} />
-                      <input name="title" required defaultValue={task.title} className="rounded-xl border border-slate-300 px-3 py-2" />
-                      <input name="category" defaultValue={task.category ?? ""} className="rounded-xl border border-slate-300 px-3 py-2" />
-                      <select name="responsible_person_id" defaultValue={task.responsible_person_id ?? ""} className="rounded-xl border border-slate-300 px-3 py-2">
-                        <option value="">Responsavel</option>
-                        {people.map((person) => (
-                          <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>
-                        ))}
-                      </select>
-                      <select name="priority" defaultValue={task.priority} className="rounded-xl border border-slate-300 px-3 py-2">
-                        {PRIORITIES.map((priority) => (
-                          <option key={priority} value={priority}>{priority}</option>
-                        ))}
-                      </select>
-                      <select name="status" defaultValue={task.status} className="rounded-xl border border-slate-300 px-3 py-2">
-                        {STATUSES.map((status) => (
-                          <option key={status} value={status}>{status}</option>
-                        ))}
-                      </select>
-                      <input name="due_date" type="date" defaultValue={task.due_date ?? ""} className="rounded-xl border border-slate-300 px-3 py-2" />
-                      <select name="related_person_id" defaultValue={task.related_person_id ?? ""} className="rounded-xl border border-slate-300 px-3 py-2">
-                        <option value="">Pessoa relacionada</option>
-                        {people.map((person) => (
-                          <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>
-                        ))}
-                      </select>
-                      <select name="related_property_id" defaultValue={task.related_property_id ?? ""} className="rounded-xl border border-slate-300 px-3 py-2">
-                        <option value="">Imovel relacionado</option>
-                        {properties.map((property) => (
-                          <option key={property.id} value={property.id}>{property.title}</option>
-                        ))}
-                      </select>
-                      <select name="related_document_id" defaultValue={task.related_document_id ?? ""} className="rounded-xl border border-slate-300 px-3 py-2">
-                        <option value="">Documento relacionado</option>
-                        {documents.map((document) => (
-                          <option key={document.id} value={document.id}>{document.title}</option>
-                        ))}
-                      </select>
-                      <select name="related_legal_case_id" defaultValue={task.related_legal_case_id ?? ""} className="rounded-xl border border-slate-300 px-3 py-2">
-                        <option value="">Processo relacionado</option>
-                        {legalCases.map((legalCase) => (
-                          <option key={legalCase.id} value={legalCase.id}>{legalCase.title}</option>
-                        ))}
-                      </select>
-                      <textarea name="description" rows={2} defaultValue={task.description ?? ""} className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
+                      <TaskFields task={task} people={people} properties={properties} documents={documents} legalCases={legalCases} />
                       <div className="md:col-span-2 flex flex-wrap gap-2">
                         <SubmitButton
                           label="Salvar alteracoes"
                           className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-60"
                         />
                       </div>
-                    </form>
+                    </form>}
 
-                    <div className="flex flex-wrap gap-2">
+                    {canEdit && <div className="flex flex-wrap gap-2">
                       <form action={toggleTaskStatus}>
                         <input type="hidden" name="id" value={task.id} />
                         <input type="hidden" name="action" value="complete" />
@@ -335,7 +328,7 @@ export default async function TarefasPage({ searchParams }: PageProps) {
                           />
                         </form>
                       )}
-                    </div>
+                    </div>}
                   </div>
                 </details>
               ))}

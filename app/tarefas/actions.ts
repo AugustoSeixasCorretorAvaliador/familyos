@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { ActionErrorCode } from "@/lib/action-feedback";
 import { errorRedirectPath, reportActionError } from "@/lib/action-error";
-import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
+import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 import { logTimelineEvent } from "@/lib/timeline/log-event";
 
@@ -33,6 +33,7 @@ export async function createTask(formData: FormData) {
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/tarefas?error=permission_denied");
 
   const title = (formData.get("title") as string | null)?.trim();
   if (!title) redirect("/tarefas?error=required_fields");
@@ -87,6 +88,7 @@ export async function updateTask(formData: FormData) {
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/tarefas?error=permission_denied");
 
   const id = formData.get("id") as string | null;
   if (!id) redirect("/tarefas?error=missing_id");
@@ -148,6 +150,7 @@ export async function toggleTaskStatus(formData: FormData) {
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/tarefas?error=permission_denied");
 
   const id = formData.get("id") as string | null;
   const action = formData.get("action") as string | null;

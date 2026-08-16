@@ -8,7 +8,7 @@ import {
 } from "@/app/documentos/actions";
 import type { ActionErrorCode } from "@/lib/action-feedback";
 import { errorRedirectPath, reportActionError } from "@/lib/action-error";
-import { canAdminFamily, getFamilyContext } from "@/lib/family/context";
+import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/context";
 import { createClient } from "@/lib/supabase/server";
 import { logTimelineEvent } from "@/lib/timeline/log-event";
 
@@ -41,6 +41,7 @@ export async function createDoctor(formData: FormData) {
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/saude?error=permission_denied");
 
   const doctorName = (formData.get("doctor_name") as string | null)?.trim();
   if (!doctorName) redirect("/saude?error=required_fields");
@@ -70,6 +71,44 @@ export async function createDoctor(formData: FormData) {
   revalidatePath("/saude");
   revalidatePath("/dashboard");
   redirect("/saude?success=doctor_created");
+}
+
+export async function updateDoctor(formData: FormData) {
+  const context = await getFamilyContext();
+  const { user, family } = context;
+  const supabase = createClient();
+
+  if (!user) redirect("/login");
+  if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/saude?error=permission_denied");
+
+  const id = formData.get("id") as string | null;
+  const doctorName = (formData.get("doctor_name") as string | null)?.trim();
+  if (!id || !doctorName) redirect("/saude?error=required_fields");
+
+  const { data, error } = await supabase
+    .from("doctors")
+    .update({
+      patient_person_id: (formData.get("patient_person_id") as string | null) || null,
+      doctor_name: doctorName,
+      specialty: (formData.get("specialty") as string | null)?.trim() || null,
+      clinic: (formData.get("clinic") as string | null)?.trim() || null,
+      phone: (formData.get("phone") as string | null)?.trim() || null,
+      email: (formData.get("email") as string | null)?.trim() || null,
+      address: (formData.get("address") as string | null)?.trim() || null,
+      notes: (formData.get("notes") as string | null)?.trim() || null,
+    })
+    .eq("id", id)
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+
+  if (error || !data) {
+    failHealth(error ?? { code: "PGRST116", message: "doctor_not_found" }, user.id, family.id, "update_doctor", "update_failed");
+  }
+
+  revalidatePath("/saude");
+  redirect("/saude?success=doctor_updated");
 }
 
 export async function deleteDoctor(formData: FormData) {
@@ -112,6 +151,7 @@ export async function createMedication(formData: FormData) {
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/saude?error=permission_denied");
 
   const medicationName = (formData.get("medication_name") as string | null)?.trim();
   if (!medicationName) redirect("/saude?error=required_fields");
@@ -144,6 +184,47 @@ export async function createMedication(formData: FormData) {
   redirect("/saude?success=med_created");
 }
 
+export async function updateMedication(formData: FormData) {
+  const context = await getFamilyContext();
+  const { user, family } = context;
+  const supabase = createClient();
+
+  if (!user) redirect("/login");
+  if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/saude?error=permission_denied");
+
+  const id = formData.get("id") as string | null;
+  const medicationName = (formData.get("medication_name") as string | null)?.trim();
+  if (!id || !medicationName) redirect("/saude?error=required_fields");
+
+  const { data, error } = await supabase
+    .from("medications")
+    .update({
+      person_id: (formData.get("person_id") as string | null) || null,
+      doctor_id: (formData.get("doctor_id") as string | null) || null,
+      medication_name: medicationName,
+      dosage: (formData.get("dosage") as string | null)?.trim() || null,
+      frequency: (formData.get("frequency") as string | null)?.trim() || null,
+      schedule: (formData.get("schedule") as string | null)?.trim() || null,
+      start_date: (formData.get("start_date") as string | null) || null,
+      end_date: (formData.get("end_date") as string | null) || null,
+      status: (formData.get("status") as string | null) || "Em uso",
+      notes: (formData.get("notes") as string | null)?.trim() || null,
+    })
+    .eq("id", id)
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+
+  if (error || !data) {
+    failHealth(error ?? { code: "PGRST116", message: "medication_not_found" }, user.id, family.id, "update_medication", "update_failed");
+  }
+
+  revalidatePath("/saude");
+  revalidatePath("/dashboard");
+  redirect("/saude?success=med_updated");
+}
+
 export async function updateMedicationStatus(formData: FormData) {
   const context = await getFamilyContext();
   const { user, family } = context;
@@ -151,6 +232,7 @@ export async function updateMedicationStatus(formData: FormData) {
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/saude?error=permission_denied");
 
   const id = formData.get("id") as string | null;
   const status = formData.get("status") as string | null;
@@ -223,6 +305,7 @@ export async function createHealthExam(formData: FormData) {
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/saude?error=permission_denied");
 
   const file = formData.get("file");
   const providedExamName = (formData.get("exam_name") as string | null)?.trim();
@@ -370,11 +453,13 @@ export async function createHealthExam(formData: FormData) {
 }
 
 export async function attachHealthExamDocument(formData: FormData) {
-  const { user, family } = await getFamilyContext();
+  const context = await getFamilyContext();
+  const { user, family } = context;
   const supabase = createClient();
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/saude?error=permission_denied");
 
   const examId = formData.get("id") as string | null;
   const file = formData.get("file");
@@ -470,6 +555,57 @@ export async function attachHealthExamDocument(formData: FormData) {
   );
 }
 
+export async function updateHealthExam(formData: FormData) {
+  const context = await getFamilyContext();
+  const { user, family } = context;
+  const supabase = createClient();
+
+  if (!user) redirect("/login");
+  if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/saude?error=permission_denied");
+
+  const id = formData.get("id") as string | null;
+  const examName = (formData.get("exam_name") as string | null)?.trim();
+  if (!id || !examName) redirect("/saude?error=required_fields");
+
+  const status = (formData.get("status") as string | null) || "A programar";
+  const { data, error } = await supabase
+    .from("health_exams")
+    .update({
+      person_id: (formData.get("person_id") as string | null) || null,
+      exam_name: examName,
+      category: (formData.get("category") as string | null)?.trim() || null,
+      periodicity: (formData.get("periodicity") as string | null)?.trim() || null,
+      due_date: (formData.get("due_date") as string | null) || null,
+      performed_date: (formData.get("performed_date") as string | null) || null,
+      next_date: (formData.get("next_date") as string | null) || null,
+      status,
+      notes: (formData.get("notes") as string | null)?.trim() || null,
+    })
+    .eq("id", id)
+    .eq("family_id", family.id)
+    .select("id")
+    .maybeSingle();
+
+  if (error || !data) {
+    failHealth(error ?? { code: "PGRST116", message: "health_exam_not_found" }, user.id, family.id, "update_health_exam", "update_failed");
+  }
+
+  if (status === "Realizado" || status === "Resultado recebido") {
+    await logTimelineEvent({
+      familyId: family.id,
+      eventType: "health_exam_completed",
+      affectedEntityType: "health_exams",
+      affectedEntityId: id,
+      source: "saude.actions",
+    });
+  }
+
+  revalidatePath("/saude");
+  revalidatePath("/dashboard");
+  redirect("/saude?success=exam_updated");
+}
+
 export async function updateHealthExamStatus(formData: FormData) {
   const context = await getFamilyContext();
   const { user, family } = context;
@@ -477,6 +613,7 @@ export async function updateHealthExamStatus(formData: FormData) {
 
   if (!user) redirect("/login");
   if (!family) redirect("/dashboard?setup=required");
+  if (!canEditFamily(context)) redirect("/saude?error=permission_denied");
 
   const id = formData.get("id") as string | null;
   const status = formData.get("status") as string | null;

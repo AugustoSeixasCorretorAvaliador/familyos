@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { ExpandableCreateForm } from "@/app/components/expandable-create-form";
+import { FieldLabel } from "@/app/components/field-label";
 import { MainNav } from "@/app/components/main-nav";
 import { SubmitButton } from "@/app/components/submit-button";
 import {
@@ -84,6 +85,28 @@ const PROPERTY_DOCUMENT_TYPES = [
   "Seguro",
   "Outro",
 ];
+const fieldClass = "block w-full rounded-xl border border-slate-300 px-3 py-2";
+
+function PropertyFields({ property, people }: { property?: PropertyRow; people: PersonOption[] }) {
+  const metadata = property?.metadata ?? {};
+  const ownerIds = property?.property_owners.map((owner) => owner.person_id) ?? [];
+  return <>
+    <FieldLabel label="Nome de identificação" help="Nome amigável usado para localizar o imóvel em patrimônio, finanças, tarefas, documentos e seguros."><input name="title" required defaultValue={property?.title ?? ""} placeholder="Ex.: Apartamento Centro" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Tipo de imóvel" help="Classifica o bem, como apartamento, casa, terreno ou sala comercial."><input name="property_type" defaultValue={property?.property_type ?? ""} placeholder="Ex.: Apartamento" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Endereço" help="Localização principal usada na identificação, documentos e vínculos patrimoniais." className="md:col-span-2"><input name="address" required defaultValue={property?.address ?? ""} placeholder="Endereço completo" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Cidade" help="Município do imóvel, usado para organização e consulta."><input name="city" defaultValue={property?.city ?? ""} placeholder="Cidade" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Estado" help="UF ou estado do imóvel para complementar a localização."><input name="state" defaultValue={property?.state ?? ""} placeholder="Estado" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="CEP" help="Código postal usado para completar e conferir o endereço."><input name="postal_code" defaultValue={property?.postal_code ?? ""} placeholder="CEP" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Matrícula / RGI" help="Identificador registral do imóvel para rastreabilidade jurídica e documental."><input name="registry_number" defaultValue={property?.registry_number ?? ""} placeholder="Matrícula ou RGI" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Situação" help="Define se o imóvel é próprio, alugado, está à venda, vendido, em aquisição ou vago."><select name="situacao" defaultValue={String(metadata.situacao ?? "Proprio")} className={fieldClass}>{SITUACOES.map((situacao) => <option key={situacao}>{situacao}</option>)}</select></FieldLabel>
+    <FieldLabel label="Valor estimado" help="Valor atual usado no cálculo do patrimônio total exibido em Imóveis."><input name="valor_estimado" defaultValue={String(metadata.valor_estimado ?? "")} inputMode="decimal" placeholder="Ex.: 850.000,00" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Renda mensal" help="Receita mensal informativa do imóvel, somada no resumo de aluguéis desta visualização."><input name="renda_mensal" defaultValue={String(metadata.renda_mensal ?? "")} inputMode="decimal" placeholder="Ex.: 3.500,00" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Condomínio" help="Valor mensal de condomínio mantido como referência de custo do imóvel."><input name="condominio" defaultValue={String(metadata.condominio ?? "")} inputMode="decimal" placeholder="Valor do condomínio" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="IPTU" help="Valor de IPTU registrado como referência tributária do imóvel."><input name="iptu" defaultValue={String(metadata.iptu ?? "")} inputMode="decimal" placeholder="Valor do IPTU" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Observações" help="Informações complementares para consulta; não alteram automaticamente os cálculos patrimoniais." className="md:col-span-2"><textarea name="observacoes" defaultValue={String(metadata.observacoes ?? "")} placeholder="Observações opcionais" className={fieldClass} rows={3} /></FieldLabel>
+    <FieldLabel label="Proprietários" help="Relaciona uma ou mais pessoas da família ao imóvel e define as participações patrimoniais registradas." className="md:col-span-2"><select name="owner_ids" multiple defaultValue={ownerIds} className={`${fieldClass} min-h-28`}>{people.map((person) => <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>)}</select><span className="mt-1 block text-xs font-normal text-slate-500">Use Ctrl ou Cmd para selecionar mais de uma pessoa.</span></FieldLabel>
+  </>;
+}
 
 function toCurrency(value: unknown) {
   if (typeof value !== "number") return "-";
@@ -197,35 +220,7 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
           outcome={searchParams.error ? "error" : searchParams.success ? "success" : null}
           formClassName="grid grid-cols-1 gap-4 md:grid-cols-2"
         >
-            <input name="title" required placeholder="Nome de identificacao" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="property_type" placeholder="Tipo" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="address" required placeholder="Endereco" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
-            <input name="city" placeholder="Cidade" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="state" placeholder="Estado" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="postal_code" placeholder="CEP" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="registry_number" placeholder="Matricula/RGI" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <select name="situacao" className="rounded-xl border border-slate-300 px-3 py-2">
-              {SITUACOES.map((situacao) => (
-                <option key={situacao} value={situacao}>
-                  {situacao}
-                </option>
-              ))}
-            </select>
-            <input name="valor_estimado" placeholder="Valor estimado" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="renda_mensal" placeholder="Renda mensal" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="condominio" placeholder="Condominio" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <input name="iptu" placeholder="IPTU" className="rounded-xl border border-slate-300 px-3 py-2" />
-            <textarea name="observacoes" placeholder="Observacoes" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" rows={3} />
-            <div className="md:col-span-2">
-              <label className="block text-sm text-slate-600 mb-1">Proprietarios</label>
-              <select name="owner_ids" multiple className="w-full rounded-xl border border-slate-300 px-3 py-2 min-h-28">
-                {people.map((person) => (
-                  <option key={person.id} value={person.id}>
-                    {person.first_name} {person.last_name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <PropertyFields people={people} />
             <div className="md:col-span-2">
               <SubmitButton
                 label="Salvar imovel"
@@ -284,46 +279,7 @@ export default async function ImoveisPage({ searchParams }: PageProps) {
                       <p className="text-sm text-slate-700">Proprietarios: {owners || "Nao informado"}</p>
                       <form action={updateProperty} className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <input type="hidden" name="property_id" value={property.id} />
-                        <input name="title" defaultValue={property.title} required className="rounded-xl border border-slate-300 px-3 py-2" />
-                        <input name="property_type" defaultValue={property.property_type ?? ""} placeholder="Tipo" className="rounded-xl border border-slate-300 px-3 py-2" />
-                        <input name="address" defaultValue={property.address} required className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
-                        <input name="city" defaultValue={property.city ?? ""} placeholder="Cidade" className="rounded-xl border border-slate-300 px-3 py-2" />
-                        <input name="state" defaultValue={property.state ?? ""} placeholder="Estado" className="rounded-xl border border-slate-300 px-3 py-2" />
-                        <input name="postal_code" defaultValue={property.postal_code ?? ""} placeholder="CEP" className="rounded-xl border border-slate-300 px-3 py-2" />
-                        <input name="registry_number" defaultValue={property.registry_number ?? ""} placeholder="Matricula/RGI" className="rounded-xl border border-slate-300 px-3 py-2" />
-                        <select name="situacao" defaultValue={String(metadata.situacao ?? "Proprio")} className="rounded-xl border border-slate-300 px-3 py-2">
-                          {SITUACOES.map((situacao) => (
-                            <option key={situacao} value={situacao}>
-                              {situacao}
-                            </option>
-                          ))}
-                        </select>
-                        <input name="valor_estimado" defaultValue={String(metadata.valor_estimado ?? "")} placeholder="Valor estimado" className="rounded-xl border border-slate-300 px-3 py-2" />
-                        <input name="renda_mensal" defaultValue={String(metadata.renda_mensal ?? "")} placeholder="Renda mensal" className="rounded-xl border border-slate-300 px-3 py-2" />
-                        <input name="condominio" defaultValue={String(metadata.condominio ?? "")} placeholder="Condominio" className="rounded-xl border border-slate-300 px-3 py-2" />
-                        <input name="iptu" defaultValue={String(metadata.iptu ?? "")} placeholder="IPTU" className="rounded-xl border border-slate-300 px-3 py-2" />
-                        <textarea
-                          name="observacoes"
-                          defaultValue={String(metadata.observacoes ?? "")}
-                          placeholder="Observacoes"
-                          className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2"
-                          rows={2}
-                        />
-                        <div className="md:col-span-2">
-                          <label className="block text-sm text-slate-600 mb-1">Proprietarios</label>
-                          <select
-                            name="owner_ids"
-                            multiple
-                            className="w-full rounded-xl border border-slate-300 px-3 py-2 min-h-24"
-                            defaultValue={property.property_owners.map((owner) => owner.person_id)}
-                          >
-                            {people.map((person) => (
-                              <option key={person.id} value={person.id}>
-                                {person.first_name} {person.last_name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                        <PropertyFields property={property} people={people} />
                         <div className="md:col-span-2 flex gap-2">
                           <SubmitButton
                             label="Salvar alteracoes"

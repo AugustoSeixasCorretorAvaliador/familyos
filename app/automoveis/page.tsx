@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AssetDocumentUploadForm } from "@/app/components/asset-document-upload-form";
 import { ConfirmSubmitButton } from "@/app/components/confirm-submit-button";
 import { ExpandableCreateForm } from "@/app/components/expandable-create-form";
+import { FieldLabel } from "@/app/components/field-label";
 import { MainNav } from "@/app/components/main-nav";
 import { SubmitButton } from "@/app/components/submit-button";
 import { archiveVehicle, createVehicle, updateVehicle } from "@/app/automoveis/actions";
@@ -54,6 +55,29 @@ const STATUS = [
   ["sold", "Vendido"],
   ["archived", "Arquivado"],
 ] as const;
+const fieldClass = "block w-full rounded-xl border border-slate-300 px-3 py-2";
+
+function VehicleFields({ vehicle, people }: { vehicle?: Vehicle; people: Person[] }) {
+  return <>
+    <FieldLabel label="Título de identificação" help="Nome amigável usado para localizar o automóvel nas listas, documentos e seguros."><input name="title" required defaultValue={vehicle?.title ?? ""} placeholder="Ex.: Carro da família" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Proprietário ou responsável" help="Pessoa relacionada ao veículo para organização patrimonial, documentos e seguros."><select name="owner_person_id" defaultValue={vehicle?.owner_person_id ?? ""} className={fieldClass}><option value="">Não informado</option>{people.map((person) => <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>)}</select></FieldLabel>
+    <FieldLabel label="Marca" help="Fabricante do veículo, usado na identificação e nos resumos patrimoniais."><input name="make" required defaultValue={vehicle?.make ?? ""} placeholder="Ex.: Toyota" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Modelo" help="Modelo comercial exibido junto da marca nas listas e vínculos."><input name="model" required defaultValue={vehicle?.model ?? ""} placeholder="Ex.: Corolla" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Versão" help="Complementa o modelo com motorização ou acabamento para identificação precisa."><input name="version" defaultValue={vehicle?.version ?? ""} placeholder="Versão opcional" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Placa" help="Identificador de circulação, normalizado em maiúsculas e usado para localizar o veículo."><input name="plate" defaultValue={vehicle?.plate ?? ""} placeholder="ABC1D23" className={`${fieldClass} uppercase`} /></FieldLabel>
+    <FieldLabel label="Ano de fabricação" help="Ano em que o veículo foi produzido; auxilia histórico, documentos e avaliação."><input name="manufacture_year" type="number" min="1886" max="2200" defaultValue={vehicle?.manufacture_year ?? ""} className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Ano do modelo" help="Ano comercial do modelo, exibido como referência principal quando informado."><input name="model_year" type="number" min="1886" max="2200" defaultValue={vehicle?.model_year ?? ""} className={fieldClass} /></FieldLabel>
+    <FieldLabel label="RENAVAM" help="Número nacional do veículo para conferência e vínculo com documentos oficiais."><input name="renavam" defaultValue={vehicle?.renavam ?? ""} placeholder="RENAVAM" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Chassi" help="Identificador único do veículo usado em documentos, seguros e auditoria patrimonial."><input name="vin" defaultValue={vehicle?.vin ?? ""} placeholder="Número do chassi" className={`${fieldClass} uppercase`} /></FieldLabel>
+    <FieldLabel label="Cor" help="Característica descritiva usada na identificação visual do automóvel."><input name="color" defaultValue={vehicle?.color ?? ""} placeholder="Cor" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Combustível" help="Tipo de energia ou combustível do veículo para referência patrimonial."><input name="fuel_type" defaultValue={vehicle?.fuel_type ?? ""} placeholder="Ex.: Flex, gasolina, elétrico" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Data de aquisição" help="Marco da entrada do veículo no patrimônio familiar."><input name="acquisition_date" type="date" defaultValue={vehicle?.acquisition_date ?? ""} className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Status" help="Indica se o veículo está ativo, financiado, vendido ou arquivado e controla sua classificação na lista."><select name="status" defaultValue={vehicle?.status ?? "active"} className={fieldClass}>{STATUS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></FieldLabel>
+    <FieldLabel label="Valor de aquisição" help="Preço pago na compra, preservado como referência histórica patrimonial."><input name="acquisition_value" defaultValue={vehicle?.acquisition_value ?? ""} inputMode="decimal" placeholder="Ex.: 120.000,00" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Valor estimado atual" help="Valor corrente usado no total estimado da frota e visão patrimonial."><input name="estimated_value" defaultValue={vehicle?.estimated_value ?? ""} inputMode="decimal" placeholder="Ex.: 105.000,00" className={fieldClass} /></FieldLabel>
+    <FieldLabel label="Observações" help="Informações complementares para consulta; não alteram os cálculos patrimoniais." className="md:col-span-2"><textarea name="notes" defaultValue={vehicle?.notes ?? ""} rows={2} placeholder="Observações opcionais" className={fieldClass} /></FieldLabel>
+  </>;
+}
 
 function currency(value: number | null) {
   if (value === null) return "Não informado";
@@ -104,23 +128,7 @@ export default async function AutomoveisPage({ searchParams }: PageProps) {
         {(message || searchParams.error) && <section role={searchParams.error ? "alert" : "status"} className={`rounded-xl border px-4 py-3 text-sm ${searchParams.error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>{searchParams.error ? getActionErrorMessage(searchParams.error, searchParams.request_id) : message}</section>}
 
         {canEdit && <ExpandableCreateForm id="create-vehicle" title="Cadastrar automóvel" buttonLabel="NOVO AUTOMÓVEL" submitAction={createVehicle} outcome={searchParams.error ? "error" : searchParams.success === "created" ? "success" : null} formClassName="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <input name="title" required placeholder="Título de identificação" className="rounded-xl border border-slate-300 px-3 py-2" />
-          <select name="owner_person_id" className="rounded-xl border border-slate-300 px-3 py-2"><option value="">Proprietário ou responsável</option>{people.map((person) => <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>)}</select>
-          <input name="make" required placeholder="Marca" className="rounded-xl border border-slate-300 px-3 py-2" />
-          <input name="model" required placeholder="Modelo" className="rounded-xl border border-slate-300 px-3 py-2" />
-          <input name="version" placeholder="Versão" className="rounded-xl border border-slate-300 px-3 py-2" />
-          <input name="plate" placeholder="Placa" className="rounded-xl border border-slate-300 px-3 py-2 uppercase" />
-          <input name="manufacture_year" type="number" min="1886" max="2200" placeholder="Ano de fabricação" className="rounded-xl border border-slate-300 px-3 py-2" />
-          <input name="model_year" type="number" min="1886" max="2200" placeholder="Ano do modelo" className="rounded-xl border border-slate-300 px-3 py-2" />
-          <input name="renavam" placeholder="RENAVAM" className="rounded-xl border border-slate-300 px-3 py-2" />
-          <input name="vin" placeholder="Chassi" className="rounded-xl border border-slate-300 px-3 py-2 uppercase" />
-          <input name="color" placeholder="Cor" className="rounded-xl border border-slate-300 px-3 py-2" />
-          <input name="fuel_type" placeholder="Combustível" className="rounded-xl border border-slate-300 px-3 py-2" />
-          <label className="text-sm text-slate-600">Data de aquisição<input name="acquisition_date" type="date" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" /></label>
-          <select name="status" className="rounded-xl border border-slate-300 px-3 py-2">{STATUS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-          <input name="acquisition_value" inputMode="decimal" placeholder="Valor de aquisição" className="rounded-xl border border-slate-300 px-3 py-2" />
-          <input name="estimated_value" inputMode="decimal" placeholder="Valor estimado atual" className="rounded-xl border border-slate-300 px-3 py-2" />
-          <textarea name="notes" rows={2} placeholder="Observações" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" />
+          <VehicleFields people={people} />
           <div className="md:col-span-2"><SubmitButton label="Salvar automóvel" className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60" /></div>
         </ExpandableCreateForm>}
 
@@ -134,16 +142,8 @@ export default async function AutomoveisPage({ searchParams }: PageProps) {
                 <p className="text-sm text-slate-700">Responsável: {vehicle.owner_person_id ? peopleById.get(vehicle.owner_person_id) ?? "Não encontrado" : "Não informado"}</p>
                 {canEdit && <form action={updateVehicle} className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <input type="hidden" name="vehicle_id" value={vehicle.id} />
-                  <input name="title" required defaultValue={vehicle.title} className="rounded-xl border border-slate-300 px-3 py-2" />
-                  <select name="owner_person_id" defaultValue={vehicle.owner_person_id ?? ""} className="rounded-xl border border-slate-300 px-3 py-2"><option value="">Proprietário ou responsável</option>{people.map((person) => <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>)}</select>
-                  <input name="make" required defaultValue={vehicle.make} placeholder="Marca" className="rounded-xl border border-slate-300 px-3 py-2" /><input name="model" required defaultValue={vehicle.model} placeholder="Modelo" className="rounded-xl border border-slate-300 px-3 py-2" />
-                  <input name="version" defaultValue={vehicle.version ?? ""} placeholder="Versão" className="rounded-xl border border-slate-300 px-3 py-2" /><input name="plate" defaultValue={vehicle.plate ?? ""} placeholder="Placa" className="rounded-xl border border-slate-300 px-3 py-2 uppercase" />
-                  <input name="manufacture_year" type="number" min="1886" max="2200" defaultValue={vehicle.manufacture_year ?? ""} placeholder="Ano de fabricação" className="rounded-xl border border-slate-300 px-3 py-2" /><input name="model_year" type="number" min="1886" max="2200" defaultValue={vehicle.model_year ?? ""} placeholder="Ano do modelo" className="rounded-xl border border-slate-300 px-3 py-2" />
-                  <input name="renavam" defaultValue={vehicle.renavam ?? ""} placeholder="RENAVAM" className="rounded-xl border border-slate-300 px-3 py-2" /><input name="vin" defaultValue={vehicle.vin ?? ""} placeholder="Chassi" className="rounded-xl border border-slate-300 px-3 py-2 uppercase" />
-                  <input name="color" defaultValue={vehicle.color ?? ""} placeholder="Cor" className="rounded-xl border border-slate-300 px-3 py-2" /><input name="fuel_type" defaultValue={vehicle.fuel_type ?? ""} placeholder="Combustível" className="rounded-xl border border-slate-300 px-3 py-2" />
-                  <label className="text-sm text-slate-600">Data de aquisição<input name="acquisition_date" type="date" defaultValue={vehicle.acquisition_date ?? ""} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2" /></label><select name="status" defaultValue={vehicle.status} className="rounded-xl border border-slate-300 px-3 py-2">{STATUS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-                  <input name="acquisition_value" defaultValue={vehicle.acquisition_value ?? ""} inputMode="decimal" placeholder="Valor de aquisição" className="rounded-xl border border-slate-300 px-3 py-2" /><input name="estimated_value" defaultValue={vehicle.estimated_value ?? ""} inputMode="decimal" placeholder="Valor estimado" className="rounded-xl border border-slate-300 px-3 py-2" />
-                  <textarea name="notes" defaultValue={vehicle.notes ?? ""} rows={2} placeholder="Observações" className="rounded-xl border border-slate-300 px-3 py-2 md:col-span-2" /><div className="md:col-span-2"><SubmitButton label="Salvar alterações" className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white" /></div>
+                  <VehicleFields vehicle={vehicle} people={people} />
+                  <div className="md:col-span-2"><SubmitButton label="Salvar alterações" className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white" /></div>
                 </form>}
                 <section className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4"><h3 className="font-medium text-slate-900">Documentos do automóvel ({vehicleDocuments.length})</h3>{canEdit && <AssetDocumentUploadForm familyId={family.id} entityId={vehicle.id} entityType="vehicle" documentTypes={DOCUMENT_TYPES} />}
                   {vehicleDocuments.length === 0 ? <p className="mt-4 text-sm text-slate-500">Nenhum documento vinculado.</p> : <div className="mt-4 space-y-2">{vehicleDocuments.map((document) => <div key={document.id} className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-medium text-slate-900">{document.title}</p><p className="text-xs text-slate-500">{document.document_type} · {getDocumentProcessingLabel(document.processing_status, document.metadata)}</p></div><div className="flex flex-wrap gap-2"><Link href={`/documentos/${document.id}/download`} className="rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-medium text-blue-700">Baixar</Link><Link href={`/documentos/${document.id}/revisar`} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700">Revisar</Link>{canAdmin && <form action={deleteAssetDocument}><input type="hidden" name="entity_type" value="vehicle" /><input type="hidden" name="entity_id" value={vehicle.id} /><input type="hidden" name="document_id" value={document.id} /><ConfirmSubmitButton label="Excluir" confirmMessage="Excluir este documento e seu arquivo privado?" className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700" /></form>}</div></div>)}</div>}
