@@ -265,9 +265,15 @@ export function calculateDashboard(workspace: FinanceWorkspace, competence: stri
     sum + accountBalanceAtCompetence(account, workspace.entries, projectionStart), 0
   );
   const projected = cashProjectedBalanceFromStart(competence, projectionStart, projectionAvailable, workspace.entries);
+  const monthEnd = new Date(Date.UTC(Number(competence.slice(0, 4)), Number(competence.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const activeAssets = new Map(workspace.assets.filter((asset) => asset.active && !asset.deleted_at).map((asset) => [asset.id, asset]));
   const activePositions = new Map<string, number>();
-  const activeAssetIds = new Set(workspace.assets.map((asset) => asset.id));
-  for (const position of workspace.positions) if (activeAssetIds.has(position.asset_id) && !activePositions.has(position.asset_id)) activePositions.set(position.asset_id, position.market_value);
+  for (const position of workspace.positions) {
+    const asset = activeAssets.get(position.asset_id);
+    if (!asset || position.position_date > monthEnd) continue;
+    const valueBrl = position.market_value_brl ?? (asset.currency.trim().toUpperCase() === "BRL" ? position.market_value : null);
+    if (valueBrl !== null && !activePositions.has(position.asset_id)) activePositions.set(position.asset_id, valueBrl);
+  }
   const rentalIncome = month.filter((entry) => entry.entry_type === "income" && (entry.property_id || entry.lease_contract_id)).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
   const propertyExpenses = month.filter((entry) => entry.entry_type === "expense" && entry.property_id).reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
   return {
@@ -289,8 +295,8 @@ export async function getConsolidatedFinancialSummary(familyId: string, competen
   const db = createClient();
   const [entriesResult, assetsResult, positionsResult] = await Promise.all([
     db.from("financial_entries").select("*").eq("family_id", familyId).eq("competence", competence).is("deleted_at", null),
-    db.from("investment_assets").select("id").eq("family_id", familyId).eq("active", true).is("deleted_at", null),
-    db.from("investment_positions").select("asset_id,market_value,position_date,created_at").eq("family_id", familyId)
+    db.from("investment_assets").select("id,currency").eq("family_id", familyId).eq("active", true).is("deleted_at", null),
+    db.from("investment_positions").select("asset_id,market_value,market_value_brl,position_date,created_at").eq("family_id", familyId)
       .order("position_date", { ascending: false }).order("created_at", { ascending: false }),
   ]);
   throwIfError(entriesResult.error, "consolidated_entries");
@@ -304,12 +310,14 @@ export async function getConsolidatedFinancialSummary(familyId: string, competen
   const expense = month
     .filter((entry) => ["expense", "reversal"].includes(entry.entry_type))
     .reduce((sum, entry) => sum + monthlyEntryAmount(entry), 0);
-  const activeAssetIds = new Set((assetsResult.data ?? []).map((asset) => asset.id));
+  const activeAssets = new Map((assetsResult.data ?? []).map((asset) => [asset.id, asset]));
+  const monthEnd = new Date(Date.UTC(Number(competence.slice(0, 4)), Number(competence.slice(5, 7)), 0)).toISOString().slice(0, 10);
   const latestPositions = new Map<string, { value: number; date: string }>();
   for (const position of positionsResult.data ?? []) {
-    if (activeAssetIds.has(position.asset_id) && !latestPositions.has(position.asset_id)) {
-      latestPositions.set(position.asset_id, { value: position.market_value, date: position.position_date });
-    }
+    const asset = activeAssets.get(position.asset_id);
+    if (!asset || position.position_date > monthEnd || latestPositions.has(position.asset_id)) continue;
+    const valueBrl = position.market_value_brl ?? (asset.currency.trim().toUpperCase() === "BRL" ? position.market_value : null);
+    if (valueBrl !== null) latestPositions.set(position.asset_id, { value: valueBrl, date: position.position_date });
   }
   const investments = Array.from(latestPositions.values()).reduce((sum, position) => sum + position.value, 0);
   const entryUpdates = month.map((entry) => entry.updated_at);
