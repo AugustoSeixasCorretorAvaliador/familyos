@@ -9,11 +9,23 @@ import { canAdminFamily, canEditFamily, getFamilyContext } from "@/lib/family/co
 import { findCardCategoryId } from "@/lib/finance/card-category";
 import { generateMonthlyOccurrences, splitInstallments } from "@/lib/finance/domain";
 import { dayBeforeCompetence, recurrenceActivationPatch, recurrenceEntryPropagationPatch } from "@/lib/finance/recurrence";
+import { CARD_SETTLEMENT_ENTRY_TYPES, isCardSettlementEntry } from "@/lib/finance/summary";
 import { assertNoClientFamilyId, CATEGORY_TYPES, competenceValue, dateValue, ENTRY_STATUSES, ENTRY_TYPES, FinanceValidationError, integerValue, moneyValue, oneOf, optionalId, textValue, validatePercentage } from "@/lib/finance/validation";
 import { createClient } from "@/lib/supabase/server";
 import type { FinancialEntryInsert } from "@/lib/finance/types";
 
 type Context = Awaited<ReturnType<typeof getFamilyContext>> & { user: NonNullable<Awaited<ReturnType<typeof getFamilyContext>>["user"]>; family: NonNullable<Awaited<ReturnType<typeof getFamilyContext>>["family"]> };
+type FinanceDb = ReturnType<typeof createClient>;
+type InvoicePaymentRecord = {
+  id: string;
+  card_id: string;
+  competence: string;
+  closed_amount: number | null;
+  expected_amount: number;
+  payment_account_id: string | null;
+  status: string;
+  credit_cards?: { payment_account_id: string | null } | null;
+};
 
 async function requireEditor(): Promise<Context> {
   const context = await getFamilyContext();
@@ -428,10 +440,23 @@ export async function toggleEntrySettlement(formData: FormData) {
     const settled = formData.get("settled") === "true";
     const db = createClient();
     const { data: entry, error: readError } = await db.from("financial_entries")
-      .select("id,entry_type,expected_amount")
+      .select("id,entry_type,expected_amount,card_id,competence")
       .eq("id", id).eq("family_id", context.family.id).is("deleted_at", null).maybeSingle();
     if (readError || !entry) throw readError ?? new Error("not_found");
-    if (!["income", "investment_yield", "expense"].includes(entry.entry_type)) throw new FinanceValidationError("invalid_entry_type");
+    if (!["income", "investment_yield"].includes(entry.entry_type) && !isCardSettlementEntry(entry)) throw new FinanceValidationError("invalid_entry_type");
+    if (entry.card_id) {
+      const { data: invoice, error: invoiceError } = await db.from("card_invoices")
+        .select("id")
+        .eq("family_id", context.family.id)
+        .eq("card_id", entry.card_id)
+        .eq("competence", entry.competence)
+        .neq("status", "cancelled")
+        .is("deleted_at", null)
+        .limit(1)
+        .maybeSingle();
+      if (invoiceError) throw invoiceError;
+      if (invoice) throw new FinanceValidationError("invoice_managed_settlement");
+    }
     const isIncome = entry.entry_type === "income" || entry.entry_type === "investment_yield";
     const { data, error } = await db.from("financial_entries").update({
       actual_amount: settled ? entry.expected_amount : null,
@@ -458,24 +483,48 @@ export async function toggleCardSettlement(formData: FormData) {
     const month = competenceValue(formData.get("competence"));
     const settled = formData.get("settled") === "true";
     const db = createClient();
-    const { data: entries, error: readError } = await db.from("financial_entries")
-      .select("id,expected_amount,source_key")
-      .eq("family_id", context.family.id).eq("card_id", cardId).eq("competence", month)
-      .eq("entry_type", "expense").is("deleted_at", null).neq("status", "cancelled");
-    if (readError) throw readError;
-    const individualEntries = (entries ?? []).filter((entry) => !entry.source_key?.startsWith("card-balance:"));
-    const effectiveDate = settled ? new Date().toISOString().slice(0, 10) : null;
-    // Limita a concorrência para cartões com muitos lançamentos e evita repetir
-    // a tempestade de requisições que anteriormente causava timeout em Finanças.
-    for (let index = 0; index < individualEntries.length; index += 8) {
-      const updates = await Promise.all(individualEntries.slice(index, index + 8).map((entry) => db.from("financial_entries").update({
-        actual_amount: settled ? entry.expected_amount : null,
-        effective_date: effectiveDate,
-        status: settled ? "paid" : "payable",
-        updated_by: context.user.id,
-      }).eq("id", entry.id).eq("family_id", context.family.id).is("deleted_at", null)));
-      const failed = updates.find((result) => result.error);
-      if (failed?.error) throw failed.error;
+    const { data: invoice, error: invoiceError } = await db.from("card_invoices")
+      .select("id,card_id,competence,closed_amount,expected_amount,payment_account_id,status,credit_cards(payment_account_id)")
+      .eq("family_id", context.family.id)
+      .eq("card_id", cardId)
+      .eq("competence", month)
+      .neq("status", "cancelled")
+      .is("deleted_at", null)
+      .limit(1)
+      .maybeSingle();
+    if (invoiceError) throw invoiceError;
+    if (invoice) {
+      const today = new Date().toISOString().slice(0, 10);
+      if (settled && invoice.status !== "paid") {
+        const amount = invoice.closed_amount ?? invoice.expected_amount;
+        const account = invoice.payment_account_id ?? invoice.credit_cards?.payment_account_id;
+        if (!account) throw new FinanceValidationError("payment_account_required");
+        await settleInvoicePayment(db, context, invoice, amount, account, today);
+      } else if (!settled && invoice.status === "paid") {
+        await undoInvoicePayment(db, context, invoice, today);
+      } else if (!settled) {
+        await updateInvoiceEntriesSettlement(db, context, invoice, null);
+      }
+    } else {
+      const { data: entries, error: readError } = await db.from("financial_entries")
+        .select("id,expected_amount,source_key")
+        .eq("family_id", context.family.id).eq("card_id", cardId).eq("competence", month)
+        .in("entry_type", Array.from(CARD_SETTLEMENT_ENTRY_TYPES)).is("deleted_at", null).neq("status", "cancelled");
+      if (readError) throw readError;
+      const individualEntries = (entries ?? []).filter((entry) => !entry.source_key?.startsWith("card-balance:"));
+      const effectiveDate = settled ? new Date().toISOString().slice(0, 10) : null;
+      // Limita a concorrência para cartões com muitos lançamentos e evita repetir
+      // a tempestade de requisições que anteriormente causava timeout em Finanças.
+      for (let index = 0; index < individualEntries.length; index += 8) {
+        const updates = await Promise.all(individualEntries.slice(index, index + 8).map((entry) => db.from("financial_entries").update({
+          actual_amount: settled ? entry.expected_amount : null,
+          effective_date: effectiveDate,
+          status: settled ? "paid" : "payable",
+          updated_by: context.user.id,
+        }).eq("id", entry.id).eq("family_id", context.family.id).is("deleted_at", null)));
+        const failed = updates.find((result) => result.error);
+        if (failed?.error) throw failed.error;
+      }
     }
   } catch (error) { actionFailure(error, context, "toggle_card_settlement", "overview", returnValues); }
   feedback("overview", "card_settlement_updated", returnValues);
@@ -898,10 +947,75 @@ export async function closeInvoice(formData: FormData) {
     const { data: invoice, error: readError } = await db.from("card_invoices").select("card_id,competence").eq("id", id).eq("family_id", context.family.id).maybeSingle();
     if (readError || !invoice) throw readError ?? new Error("not_found");
     const { error } = await db.from("card_invoices").update({ status: "closed", expected_amount: amount, closed_amount: amount, closing_date: dateValue(formData.get("closing_date"), true)!, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id); if (error) throw error;
-    const { error: linkError } = await db.from("financial_entries").update({ card_invoice_id: id, updated_by: context.user.id }).eq("family_id", context.family.id).eq("card_id", invoice.card_id).eq("competence", invoice.competence).eq("entry_type", "expense").is("deleted_at", null).neq("status", "cancelled"); if (linkError) throw linkError;
+    const { error: linkError } = await db.from("financial_entries").update({ card_invoice_id: id, updated_by: context.user.id }).eq("family_id", context.family.id).eq("card_id", invoice.card_id).eq("competence", invoice.competence).in("entry_type", Array.from(CARD_SETTLEMENT_ENTRY_TYPES)).is("deleted_at", null).neq("status", "cancelled"); if (linkError) throw linkError;
   }
   catch (error) { actionFailure(error, context, "close_invoice", "invoices"); }
   feedback("invoices", "closed");
+}
+
+async function updateInvoiceEntriesSettlement(db: FinanceDb, context: Context, invoice: Pick<InvoicePaymentRecord, "id" | "card_id" | "competence">, date: string | null, amount?: number) {
+  const { data: entries, error: entriesReadError } = await db.from("financial_entries")
+    .select("id,expected_amount,source_key")
+    .eq("family_id", context.family.id)
+    .eq("card_id", invoice.card_id)
+    .eq("competence", invoice.competence)
+    .in("entry_type", Array.from(CARD_SETTLEMENT_ENTRY_TYPES))
+    .is("deleted_at", null)
+    .neq("status", "cancelled");
+  if (entriesReadError) throw entriesReadError;
+
+  const invoiceEntries = entries ?? [];
+  for (let index = 0; index < invoiceEntries.length; index += 8) {
+    const updates = await Promise.all(invoiceEntries.slice(index, index + 8).map((entry) => db.from("financial_entries").update({
+      actual_amount: date ? (entry.source_key?.startsWith("card-balance:") ? amount ?? entry.expected_amount : entry.expected_amount) : null,
+      effective_date: date,
+      status: date ? "paid" : "payable",
+      card_invoice_id: invoice.id,
+      updated_by: context.user.id,
+    }).eq("id", entry.id).eq("family_id", context.family.id)));
+    const failed = updates.find((result) => result.error);
+    if (failed?.error) throw failed.error;
+  }
+}
+
+async function settleInvoicePayment(db: FinanceDb, context: Context, invoice: InvoicePaymentRecord, amount: number, account: string, date: string) {
+  const sourceKey = `invoice-payment:${invoice.id}`;
+  const { data: existingPayment, error: paymentReadError } = await db.from("financial_entries").select("id").eq("family_id", context.family.id).eq("source_key", sourceKey).is("deleted_at", null).maybeSingle();
+  if (paymentReadError) throw paymentReadError;
+  const paymentValues = { description: "Pagamento de fatura", competence: invoice.competence, entry_type: "transfer" as const, cash_direction: "outflow" as const, expected_amount: amount, actual_amount: amount, effective_date: date, status: "paid" as const, origin: "system" as const, account_id: account, card_id: invoice.card_id, card_invoice_id: invoice.id, updated_by: context.user.id };
+  const paymentResult = existingPayment
+    ? await db.from("financial_entries").update(paymentValues).eq("id", existingPayment.id).eq("family_id", context.family.id)
+    : await db.from("financial_entries").insert({ ...paymentValues, family_id: context.family.id, created_by: context.user.id, source_key: sourceKey });
+  if (paymentResult.error) throw paymentResult.error;
+
+  const { data: existingReversal, error: reversalReadError } = await db.from("financial_entries").select("id").eq("family_id", context.family.id).eq("source_key", `invoice-payment-reversal:${invoice.id}`).limit(1).maybeSingle();
+  if (reversalReadError) throw reversalReadError;
+  if (existingReversal) {
+    const { error: archiveReversalError } = await db.from("financial_entries").update({ deleted_at: new Date().toISOString(), status: "reversed", updated_by: context.user.id }).eq("id", existingReversal.id).eq("family_id", context.family.id);
+    if (archiveReversalError) throw archiveReversalError;
+  }
+
+  const { error: updateError } = await db.from("card_invoices").update({ status: "paid", paid_amount: amount, payment_date: date, payment_account_id: account, updated_by: context.user.id }).eq("id", invoice.id).eq("family_id", context.family.id);
+  if (updateError) throw updateError;
+  await updateInvoiceEntriesSettlement(db, context, invoice, date, amount);
+}
+
+async function undoInvoicePayment(db: FinanceDb, context: Context, invoice: Pick<InvoicePaymentRecord, "id" | "card_id" | "competence">, date: string) {
+  const { data: payment, error: paymentError } = await db.from("financial_entries").select("id,account_id,actual_amount,expected_amount").eq("family_id", context.family.id).eq("source_key", `invoice-payment:${invoice.id}`).is("deleted_at", null).maybeSingle();
+  if (paymentError || !payment) throw paymentError ?? new Error("payment_not_found");
+  const amount = payment.actual_amount ?? payment.expected_amount;
+  const reversalSourceKey = `invoice-payment-reversal:${invoice.id}`;
+  const reversalValues = { description: "Estorno de pagamento de fatura", competence: invoice.competence, entry_type: "transfer" as const, cash_direction: "inflow" as const, expected_amount: amount, actual_amount: amount, effective_date: date, status: "received" as const, origin: "system" as const, account_id: payment.account_id, card_id: invoice.card_id, card_invoice_id: invoice.id, reversal_of_entry_id: payment.id, updated_by: context.user.id, deleted_at: null };
+  const { data: existingReversal, error: reversalReadError } = await db.from("financial_entries").select("id").eq("family_id", context.family.id).eq("source_key", reversalSourceKey).limit(1).maybeSingle();
+  if (reversalReadError) throw reversalReadError;
+  const reversalResult = existingReversal
+    ? await db.from("financial_entries").update(reversalValues).eq("id", existingReversal.id).eq("family_id", context.family.id)
+    : await db.from("financial_entries").insert({ ...reversalValues, family_id: context.family.id, created_by: context.user.id, source_key: reversalSourceKey });
+  if (reversalResult.error) throw reversalResult.error;
+
+  const { error: updateError } = await db.from("card_invoices").update({ status: "closed", paid_amount: null, payment_date: null, updated_by: context.user.id }).eq("id", invoice.id).eq("family_id", context.family.id);
+  if (updateError) throw updateError;
+  await updateInvoiceEntriesSettlement(db, context, invoice, null);
 }
 
 export async function payInvoice(formData: FormData) {
@@ -909,17 +1023,7 @@ export async function payInvoice(formData: FormData) {
   try {
     assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const db = createClient(); const { data: invoice, error } = await db.from("card_invoices").select("id,card_id,competence,closed_amount,expected_amount,payment_account_id,status,credit_cards(payment_account_id)").eq("id", id).eq("family_id", context.family.id).maybeSingle(); if (error || !invoice) throw error ?? new Error("not_found"); if (invoice.status === "paid") throw new FinanceValidationError("already_paid");
     const amount = moneyValue(formData.get("paid_amount")) ?? invoice.closed_amount ?? invoice.expected_amount; const account = optionalId(formData, "payment_account_id") ?? invoice.payment_account_id ?? invoice.credit_cards?.payment_account_id; if (!account) throw new FinanceValidationError("payment_account_required"); const date = dateValue(formData.get("payment_date"), true)!;
-    const sourceKey = `invoice-payment:${invoice.id}`;
-    const { data: existingPayment, error: paymentReadError } = await db.from("financial_entries").select("id").eq("family_id", context.family.id).eq("source_key", sourceKey).is("deleted_at", null).maybeSingle(); if (paymentReadError) throw paymentReadError;
-    const paymentValues = { description: "Pagamento de fatura", competence: invoice.competence, entry_type: "transfer" as const, cash_direction: "outflow" as const, expected_amount: amount, actual_amount: amount, effective_date: date, status: "paid" as const, origin: "system" as const, account_id: account, card_id: invoice.card_id, card_invoice_id: invoice.id, updated_by: context.user.id };
-    const paymentResult = existingPayment ? await db.from("financial_entries").update(paymentValues).eq("id", existingPayment.id).eq("family_id", context.family.id) : await db.from("financial_entries").insert({ ...paymentValues, family_id: context.family.id, created_by: context.user.id, source_key: sourceKey }); if (paymentResult.error) throw paymentResult.error;
-    const { error: updateError } = await db.from("card_invoices").update({ status: "paid", paid_amount: amount, payment_date: date, payment_account_id: account, updated_by: context.user.id }).eq("id", invoice.id).eq("family_id", context.family.id); if (updateError) throw updateError;
-    const { data: invoiceEntries, error: entriesReadError } = await db.from("financial_entries").select("id,expected_amount,source_key").eq("family_id", context.family.id).eq("card_id", invoice.card_id).eq("competence", invoice.competence).eq("entry_type", "expense").is("deleted_at", null).neq("status", "cancelled"); if (entriesReadError) throw entriesReadError;
-    const payableEntries = invoiceEntries ?? [];
-    for (let index = 0; index < payableEntries.length; index += 8) {
-      const updates = await Promise.all(payableEntries.slice(index, index + 8).map((entry) => db.from("financial_entries").update({ actual_amount: entry.source_key?.startsWith("card-balance:") ? amount : entry.expected_amount, effective_date: date, status: "paid", card_invoice_id: invoice.id, updated_by: context.user.id }).eq("id", entry.id).eq("family_id", context.family.id)));
-      const failed = updates.find((result) => result.error); if (failed?.error) throw failed.error;
-    }
+    await settleInvoicePayment(db, context, invoice, amount, account, date);
   } catch (error) { actionFailure(error, context, "pay_invoice", "invoices"); }
   feedback("invoices", "paid");
 }
@@ -930,13 +1034,7 @@ export async function reverseInvoicePayment(formData: FormData) {
     assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const date = dateValue(formData.get("reversal_date"), true)!; const db = createClient();
     const { data: invoice, error } = await db.from("card_invoices").select("id,card_id,competence,closed_amount,expected_amount,status").eq("id", id).eq("family_id", context.family.id).maybeSingle();
     if (error || !invoice) throw error ?? new Error("not_found"); if (invoice.status !== "paid") throw new FinanceValidationError("invoice_not_paid");
-    const { data: payment, error: paymentError } = await db.from("financial_entries").select("id,account_id,actual_amount,expected_amount").eq("family_id", context.family.id).eq("source_key", `invoice-payment:${id}`).is("deleted_at", null).maybeSingle();
-    if (paymentError || !payment) throw paymentError ?? new Error("payment_not_found");
-    const amount = payment.actual_amount ?? payment.expected_amount;
-    const { error: reversalError } = await db.from("financial_entries").insert({ family_id: context.family.id, created_by: context.user.id, description: "Estorno de pagamento de fatura", competence: invoice.competence, entry_type: "transfer", cash_direction: "inflow", expected_amount: amount, actual_amount: amount, effective_date: date, status: "received", origin: "system", account_id: payment.account_id, card_id: invoice.card_id, card_invoice_id: invoice.id, reversal_of_entry_id: payment.id, source_key: `invoice-payment-reversal:${invoice.id}` });
-    if (reversalError) throw reversalError;
-    const { error: updateError } = await db.from("card_invoices").update({ status: "closed", paid_amount: null, payment_date: null, updated_by: context.user.id }).eq("id", invoice.id).eq("family_id", context.family.id); if (updateError) throw updateError;
-    const { error: entriesError } = await db.from("financial_entries").update({ actual_amount: null, effective_date: null, status: "payable", updated_by: context.user.id }).eq("family_id", context.family.id).eq("card_id", invoice.card_id).eq("competence", invoice.competence).eq("entry_type", "expense").is("deleted_at", null).neq("status", "cancelled"); if (entriesError) throw entriesError;
+    await undoInvoicePayment(db, context, invoice, date);
   } catch (error) { actionFailure(error, context, "reverse_invoice_payment", "invoices"); }
   feedback("invoices", "reversed");
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accountBalanceAtCompetence, accumulateProjectedBalance, cashflowEntriesForBalance, cashProjectedBalanceFromStart, effectiveCashflowEntries, expectedEntriesTotal, installmentProgressLabel, invoiceDisplayAmount, invoiceEntriesForCard, invoiceExpectedAmount, isCardCategoryName, monthlyEntryAmount, operatingProjectedBalanceFromStart, pendingEntriesTotal, placeCardCategoriesLast, projectedBalance, projectedBalanceFromStart, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
+import { accountBalanceAtCompetence, accumulateProjectedBalance, cashflowEntriesForBalance, cashProjectedBalanceFromStart, effectiveCashflowEntries, expectedEntriesTotal, installmentProgressLabel, invoiceDisplayAmount, invoiceEntriesForCard, invoiceExpectedAmount, isCardCategoryName, isCardSettlementEntry, managedCardInvoice, monthlyEntryAmount, operatingProjectedBalanceFromStart, pendingEntriesTotal, placeCardCategoriesLast, projectedBalance, projectedBalanceFromStart, settledEntriesTotal, sortCardEntries, sortEntriesAlphabetically } from "@/lib/finance/summary";
 import type { CardInvoice, FinancialEntryRow } from "@/lib/finance/types";
 
 function entry(overrides: Partial<FinancialEntryRow> = {}) {
@@ -29,6 +29,21 @@ describe("resumo financeiro mensal", () => {
 
     expect(monthlyEntryAmount(reversal)).toBe(-98);
     expect(settledEntriesTotal([entry({ actual_amount: 200 }), settledReversal])).toBe(102);
+  });
+
+  it("inclui despesas e estornos na baixa conjunta do cartão", () => {
+    expect(isCardSettlementEntry(entry({ entry_type: "expense" }))).toBe(true);
+    expect(isCardSettlementEntry(entry({ entry_type: "reversal" }))).toBe(true);
+    expect(isCardSettlementEntry(entry({ entry_type: "transfer" }))).toBe(false);
+  });
+
+  it("delega a baixa à fatura formal ativa da mesma competência", () => {
+    const open = { id: "open", card_id: "card-1", competence: "2026-08-01", status: "closed", deleted_at: null } as CardInvoice;
+    const cancelled = { id: "cancelled", card_id: "card-1", competence: "2026-08-01", status: "cancelled", deleted_at: null } as CardInvoice;
+    const archived = { id: "archived", card_id: "card-1", competence: "2026-08-01", status: "closed", deleted_at: "2026-08-02T00:00:00Z" } as CardInvoice;
+
+    expect(managedCardInvoice([cancelled, archived, open], "card-1", "2026-08-01")?.id).toBe("open");
+    expect(managedCardInvoice([cancelled, archived], "card-1", "2026-08-01")).toBeUndefined();
   });
 
   it("não duplica despesas detalhadas quando existe saldo consolidado do cartão", () => {

@@ -1,5 +1,21 @@
 import type { CardInvoice, FinancialEntryRow } from "@/lib/finance/types";
 
+export const CARD_SETTLEMENT_ENTRY_TYPES = ["expense", "reversal"] as const;
+
+export function isCardSettlementEntry(entry: Pick<FinancialEntryRow, "entry_type">) {
+  return CARD_SETTLEMENT_ENTRY_TYPES.includes(entry.entry_type as typeof CARD_SETTLEMENT_ENTRY_TYPES[number]);
+}
+
+export function managedCardInvoice(invoices: CardInvoice[], cardId: string | null, competence: string) {
+  if (!cardId) return undefined;
+  return invoices.find((invoice) =>
+    invoice.card_id === cardId
+    && invoice.competence === competence
+    && invoice.status !== "cancelled"
+    && !invoice.deleted_at
+  );
+}
+
 export function monthlyEntryAmount(entry: FinancialEntryRow) {
   const amount = entry.actual_amount ?? entry.expected_amount;
   return entry.entry_type === "reversal" ? -amount : amount;
