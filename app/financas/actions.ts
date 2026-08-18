@@ -809,11 +809,18 @@ export async function generateRecurrenceOccurrences(formData: FormData) {
     assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const count = integerValue(formData.get("count"), { min: 1, max: 60, required: true })!; const db = createClient();
     const { data: rule, error } = await db.from("recurrences").select("*").eq("id", id).eq("family_id", context.family.id).eq("active", true).is("deleted_at", null).maybeSingle(); if (error || !rule) throw error ?? new Error("not_found");
     if (rule.frequency !== "monthly" || !rule.next_occurrence || !rule.entry_type || rule.expected_amount === null) throw new FinanceValidationError("invalid_recurrence");
-    const occurrences = generateMonthlyOccurrences({ recurrenceId: rule.id, startDate: rule.next_occurrence, count, endDate: rule.end_date, intervalMonths: rule.interval_value });
+    const occurrences = generateMonthlyOccurrences({ recurrenceId: rule.id, startDate: rule.next_occurrence, count, endDate: rule.end_date, intervalMonths: rule.interval_value, dayOfMonth: rule.day_of_month });
     const extras = typeof rule.rule === "object" && rule.rule && !Array.isArray(rule.rule) ? rule.rule as Record<string, unknown> : {};
     const rows: FinancialEntryInsert[] = occurrences.map((occurrence) => ({ family_id: context.family.id, created_by: context.user.id, description: rule.description ?? "Lançamento recorrente", competence: `${occurrence.date.slice(0, 7)}-01`, entry_type: rule.entry_type!, cash_direction: ["income", "investment_redemption", "investment_yield"].includes(rule.entry_type!) ? "inflow" : "outflow", expected_amount: rule.expected_amount!, expected_date: occurrence.date, due_date: occurrence.date, status: rule.entry_type === "income" ? "receivable" : "payable", origin: "recurrence", purchase_kind: "recurring", recurrence_id: rule.id, category_id: rule.category_id, classification_category_id: typeof extras.classification_category_id === "string" ? extras.classification_category_id : null, account_id: rule.account_id, card_id: rule.card_id, responsible_person_id: rule.responsible_person_id, source_key: occurrence.sourceKey }));
-    if (rows.length) { const { error: insertError } = await db.from("financial_entries").upsert(rows, { onConflict: "family_id,source_key", ignoreDuplicates: true }); if (insertError) throw insertError; }
-    const next = generateMonthlyOccurrences({ recurrenceId: rule.id, startDate: rule.next_occurrence, count: count + 1, endDate: rule.end_date, intervalMonths: rule.interval_value }).at(-1)?.date ?? null;
+    const sourceKeys = rows.map((row) => row.source_key).filter((key): key is string => Boolean(key));
+    const { data: existingRows, error: existingError } = sourceKeys.length
+      ? await db.from("financial_entries").select("source_key").eq("family_id", context.family.id).in("source_key", sourceKeys).is("deleted_at", null)
+      : { data: [], error: null };
+    if (existingError) throw existingError;
+    const existingKeys = new Set((existingRows ?? []).map((row) => row.source_key));
+    const missingRows = rows.filter((row) => !row.source_key || !existingKeys.has(row.source_key));
+    if (missingRows.length) { const { error: insertError } = await db.from("financial_entries").insert(missingRows); if (insertError) throw insertError; }
+    const next = generateMonthlyOccurrences({ recurrenceId: rule.id, startDate: rule.next_occurrence, count: count + 1, endDate: rule.end_date, intervalMonths: rule.interval_value, dayOfMonth: rule.day_of_month }).at(-1)?.date ?? null;
     const { error: updateError } = await db.from("recurrences").update({ next_occurrence: next, active: Boolean(next), updated_by: context.user.id }).eq("id", rule.id).eq("family_id", context.family.id); if (updateError) throw updateError;
   } catch (error) { actionFailure(error, context, "generate_recurrence", "recurrences"); }
   feedback("recurrences", "generated");
@@ -934,7 +941,13 @@ export async function createInvoice(formData: FormData) {
     assertNoClientFamilyId(formData); const cardId = textValue(formData.get("card_id"), true)!; const competence = competenceValue(formData.get("competence")); const dueDate = dateValue(formData.get("due_date"), true)!; const db = createClient();
     const { data: rows, error } = await db.from("financial_entries").select("expected_amount,entry_type").eq("family_id", context.family.id).eq("card_id", cardId).eq("competence", competence).is("deleted_at", null).neq("status", "cancelled"); if (error) throw error;
     const expected = (rows ?? []).reduce((sum, row) => row.entry_type === "expense" ? sum + row.expected_amount : row.entry_type === "reversal" ? sum - row.expected_amount : sum, 0);
-    const { data: invoice, error: invoiceError } = await db.from("card_invoices").upsert({ family_id: context.family.id, created_by: context.user.id, card_id: cardId, competence, due_date: dueDate, expected_amount: Math.max(0, expected), status: "open" }, { onConflict: "family_id,card_id,competence" }).select("id").single(); if (invoiceError) throw invoiceError;
+    const { data: existingInvoice, error: invoiceReadError } = await db.from("card_invoices").select("id,status").eq("family_id", context.family.id).eq("card_id", cardId).eq("competence", competence).is("deleted_at", null).maybeSingle();
+    if (invoiceReadError) throw invoiceReadError;
+    const status = existingInvoice?.status === "paid" ? "paid" : existingInvoice?.status === "closed" ? "closed" : "open";
+    const invoiceResult = existingInvoice
+      ? await db.from("card_invoices").update({ due_date: dueDate, expected_amount: Math.max(0, expected), status, updated_by: context.user.id }).eq("id", existingInvoice.id).eq("family_id", context.family.id).select("id").single()
+      : await db.from("card_invoices").insert({ family_id: context.family.id, created_by: context.user.id, card_id: cardId, competence, due_date: dueDate, expected_amount: Math.max(0, expected), status }).select("id").single();
+    const { data: invoice, error: invoiceError } = invoiceResult; if (invoiceError || !invoice) throw invoiceError ?? new FinanceValidationError("not_found");
     const { error: linkError } = await db.from("financial_entries").update({ card_invoice_id: invoice.id, updated_by: context.user.id }).eq("family_id", context.family.id).eq("card_id", cardId).eq("competence", competence).is("card_invoice_id", null).is("deleted_at", null); if (linkError) throw linkError;
   } catch (error) { actionFailure(error, context, "create_invoice", "invoices"); }
   feedback("invoices", "created");
@@ -946,8 +959,8 @@ export async function closeInvoice(formData: FormData) {
     assertNoClientFamilyId(formData); const id = textValue(formData.get("id"), true)!; const amount = moneyValue(formData.get("closed_amount"), true)!; const db = createClient();
     const { data: invoice, error: readError } = await db.from("card_invoices").select("card_id,competence").eq("id", id).eq("family_id", context.family.id).maybeSingle();
     if (readError || !invoice) throw readError ?? new Error("not_found");
-    const { error } = await db.from("card_invoices").update({ status: "closed", expected_amount: amount, closed_amount: amount, closing_date: dateValue(formData.get("closing_date"), true)!, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id); if (error) throw error;
     const { error: linkError } = await db.from("financial_entries").update({ card_invoice_id: id, updated_by: context.user.id }).eq("family_id", context.family.id).eq("card_id", invoice.card_id).eq("competence", invoice.competence).in("entry_type", Array.from(CARD_SETTLEMENT_ENTRY_TYPES)).is("deleted_at", null).neq("status", "cancelled"); if (linkError) throw linkError;
+    const { error } = await db.from("card_invoices").update({ status: "closed", expected_amount: amount, closed_amount: amount, closing_date: dateValue(formData.get("closing_date"), true)!, updated_by: context.user.id }).eq("id", id).eq("family_id", context.family.id); if (error) throw error;
   }
   catch (error) { actionFailure(error, context, "close_invoice", "invoices"); }
   feedback("invoices", "closed");

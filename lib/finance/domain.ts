@@ -162,12 +162,21 @@ function addMonths(isoDate: string, months: number) {
   return `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, "0")}-${String(safeDay).padStart(2, "0")}`;
 }
 
+function addMonthsWithDay(isoDate: string, months: number, dayOfMonth?: number | null) {
+  if (!dayOfMonth || months === 0) return addMonths(isoDate, months);
+  const [year, month] = isoDate.split("-").map(Number);
+  const target = new Date(Date.UTC(year, month - 1 + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  return `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, "0")}-${String(Math.min(dayOfMonth, lastDay)).padStart(2, "0")}`;
+}
+
 export function generateMonthlyOccurrences(input: {
   recurrenceId: string;
   startDate: string;
   count: number;
   endDate?: string | null;
   intervalMonths?: number;
+  dayOfMonth?: number | null;
 }) {
   if (!Number.isSafeInteger(input.count) || input.count < 0) {
     throw new Error("invalid recurrence count");
@@ -177,7 +186,7 @@ export function generateMonthlyOccurrences(input: {
     throw new Error("invalid recurrence interval");
   }
   return Array.from({ length: input.count }, (_, index) => {
-    const date = addMonths(input.startDate, index * intervalMonths);
+    const date = addMonthsWithDay(input.startDate, index * intervalMonths, input.dayOfMonth);
     return { date, sourceKey: `recurrence:${input.recurrenceId}:${date}` };
   }).filter((occurrence) => !input.endDate || occurrence.date <= input.endDate);
 }

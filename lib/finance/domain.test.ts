@@ -62,6 +62,12 @@ describe("finance domain", () => {
     ]);
   });
 
+  it("preserva a data inicial e respeita o dia mensal nas próximas ocorrências", () => {
+    expect(generateMonthlyOccurrences({ recurrenceId: "r1", startDate: "2026-09-15", count: 3, dayOfMonth: 1 }).map((item) => item.date)).toEqual([
+      "2026-09-15", "2026-10-01", "2026-11-01",
+    ]);
+  });
+
   it("gera a quantidade solicitada de parcelas", () => {
     expect(splitInstallments(163_167, 3)).toEqual([54_389, 54_389, 54_389]);
   });

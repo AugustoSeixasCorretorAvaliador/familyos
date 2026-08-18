@@ -26,6 +26,12 @@ describe("recorrências financeiras contínuas", () => {
     ]);
   });
 
+  it("preserva a data inicial e usa o dia configurado nos meses seguintes", () => {
+    expect(monthlyOccurrenceDates({ startDate: "2026-09-15", dayOfMonth: 1 }, "2026-11-01")).toEqual([
+      "2026-09-15", "2026-10-01", "2026-11-01",
+    ]);
+  });
+
   it("avança o horizonte sem depender do mês corrente", () => {
     expect(addCompetenceMonths("2026-09-01", 12)).toBe("2027-09-01");
     expect(monthlyOccurrenceDates({ startDate: "2026-08-01" }, "2047-08-01")).toHaveLength(253);

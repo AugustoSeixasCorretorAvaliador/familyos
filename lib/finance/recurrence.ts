@@ -103,7 +103,9 @@ export function monthlyOccurrenceDates(window: MonthlyRecurrenceWindow, throughC
     + throughMonth.getUTCMonth() - start.getUTCMonth();
 
   for (let offset = 0; offset <= monthDistance; offset += interval) {
-    const occurrence = dateForMonth(start.getUTCFullYear(), start.getUTCMonth() + offset, day);
+    const occurrence = offset === 0
+      ? start
+      : dateForMonth(start.getUTCFullYear(), start.getUTCMonth() + offset, day);
     if (occurrence > through || (end && occurrence > end)) break;
     if (occurrence >= start) dates.push(occurrence.toISOString().slice(0, 10));
   }
