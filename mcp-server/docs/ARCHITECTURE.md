@@ -11,7 +11,7 @@
 
 3. Authorization
 - `src/tools/capabilities.ts` maps tool -> required capability.
-- `src/tools/authorization.ts` validates capability grants.
+- `src/tools/authorization.ts` derives grants from the verified family role and intersects the client-requested scope.
 
 4. Domain Services
 - `src/services/*` perform family-scoped data access via Supabase with user JWT.

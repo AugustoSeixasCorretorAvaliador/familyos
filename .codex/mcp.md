@@ -13,7 +13,8 @@
 - Valide bearer tokens com o Supabase Auth.
 - Resolva uma associacao ativa em `family_members` antes de executar ferramenta de dominio.
 - Exija `family_id` quando o usuario pertencer a mais de uma familia.
-- Verifique as capabilities definidas em `src/tools/capabilities.ts`.
+- Derive do papel familiar validado no servidor as capabilities definidas em `src/tools/capabilities.ts`.
+- Trate capabilities recebidas do cliente somente como reducao de escopo solicitada; nunca como autoridade.
 - Nunca registre bearer tokens, tokens Google, conteudo Base64 ou dados pessoais completos.
 - `SUPABASE_SERVICE_ROLE` e permitido somente no processo backend do MCP.
 
@@ -31,7 +32,7 @@
 Chamadas locais autenticadas usam `_meta` com namespace `familyos/*`:
 
 - `familyos/authorization`
-- `familyos/capabilities`
+- `familyos/capabilities` (escopo solicitado, limitado pelas capabilities derivadas no servidor)
 - `familyos/family-id`
 - `familyos/client-name`
 - `familyos/client-version`

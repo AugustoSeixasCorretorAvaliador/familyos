@@ -14,7 +14,8 @@
 
 ## Authorization
 
-- Tool-level capability checks via `x-familyos-capabilities` header.
+- Tool-level capability checks derive the maximum grant from the verified family role.
+- `x-familyos-capabilities` and `familyos/capabilities` can only reduce that server-authorized scope.
 - Missing capability returns structured `CAPABILITY_REQUIRED`.
 - Audit reads require `audit.read` plus owner/admin family role.
 
@@ -35,6 +36,5 @@
 
 - Use short JWT expiry and refresh in caller layer.
 - Prefer asymmetric Supabase JWT signing keys when configuring future key rotation.
-- Restrict who can issue capability headers.
 - Keep service role only on the MCP server.
-- Do not expose `x-familyos-capabilities` issuance to untrusted clients.
+- Never treat capability headers or MCP metadata as authorization authority.

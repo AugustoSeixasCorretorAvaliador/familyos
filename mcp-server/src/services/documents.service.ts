@@ -356,6 +356,9 @@ export class DocumentsService extends BaseService {
   }
 
   private adminDb() {
+    if (this.auth.role !== "owner" && this.auth.role !== "admin" && this.auth.role !== "member") {
+      throw new AppError("Family editor role is required for privileged document operations", 403, "FORBIDDEN");
+    }
     return createSupabaseAdminClient();
   }
 }

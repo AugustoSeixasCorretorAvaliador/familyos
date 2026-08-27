@@ -7,7 +7,7 @@ Standalone MCP backend for FamilyOS with Supabase JWT auth, family-scoped access
 - MCP stdio server using `@modelcontextprotocol/sdk`
 - Supabase JWT validation through the Auth server and active `family_members` check
 - Family-level data scoping in all services
-- Capability gate per tool via `x-familyos-capabilities`
+- Capability gate per tool derived from the verified family role; client claims only reduce scope
 - Persistent audit logs in `public.mcp_audit_logs`, with masked summaries
 - Real document upload/versioning/OCR job/review flow against private Supabase Storage
 - Google Calendar read/write calls when the MCP client supplies a Google access token and scopes
@@ -87,10 +87,11 @@ the local stdio pipe and is not included in audit input summaries.
 1. Caller sends `Authorization: Bearer <supabase_jwt>`.
 2. Server validates the JWT with the project's Supabase Auth server.
 3. Server confirms active membership in `family_members`.
-4. Tool access is checked against `x-familyos-capabilities`.
-5. Domain queries always apply `family_id` from auth context.
-6. Users with more than one family must send `x-familyos-family-id`.
-7. Google Calendar tools use `x-google-access-token` and `x-google-scopes`; tokens are never returned or audited.
+4. Server derives allowed capabilities from the verified family role.
+5. Client capability metadata is treated only as a requested subset of that trusted scope.
+6. Domain queries always apply `family_id` from auth context.
+7. Users with more than one family must send `x-familyos-family-id`.
+8. Google Calendar tools use `x-google-access-token` and `x-google-scopes`; tokens are never returned or audited.
 
 ## Notes
 

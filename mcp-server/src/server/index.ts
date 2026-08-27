@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { env } from "../config/env";
 import { logger } from "../config/logger";
 import { buildAuthContextFromBearer } from "../auth/session";
-import { assertCapabilities, parseCapabilityHeader } from "../tools/authorization";
+import { assertCapabilities, parseCapabilityHeader, resolveEffectiveCapabilities } from "../tools/authorization";
 import { toolCapabilities } from "../tools/capabilities";
 import { toolDefinitions } from "../tools/registry";
 import { auditService, logAudit } from "../middleware/audit";
@@ -113,10 +113,11 @@ export async function startServer() {
           input: rawInput,
         });
 
-        const grants = parseCapabilityHeader(
+        const requestedCapabilities = parseCapabilityHeader(
           headerValue(headers, "x-familyos-capabilities") ??
             metadataValue(requestMetadata, "familyos/capabilities"),
         );
+        const grants = resolveEffectiveCapabilities(auth.role, requestedCapabilities);
 
         const required = toolCapabilities[tool.name] ?? [];
         assertCapabilities(tool.name, required, grants);
