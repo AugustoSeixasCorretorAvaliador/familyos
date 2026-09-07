@@ -59,7 +59,7 @@ const items: Array<{
 export function MainNav({ current }: MainNavProps) {
   return (
     <nav aria-label="Navegação principal" className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-      <Link href="/dashboard" className="inline-flex w-fit items-center gap-2.5" aria-label="HERO.FamilyOS — Dashboard">
+      <Link prefetch={false} href="/dashboard" className="inline-flex w-fit items-center gap-2.5" aria-label="HERO.FamilyOS — Dashboard">
         <Image
           src="/brand/hero-familyos-symbol.png"
           alt=""
@@ -78,7 +78,7 @@ export function MainNav({ current }: MainNavProps) {
           return (
             <Link
               key={item.key}
-              prefetch={item.href === "/financas" ? false : undefined}
+              prefetch={false}
               href={item.href}
               aria-current={isCurrent ? "page" : undefined}
               className={`transition-colors ${
