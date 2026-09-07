@@ -1,4 +1,5 @@
 import type { User } from "@supabase/supabase-js";
+import { cache } from "react";
 import { resolveDisplayName } from "@/lib/identity/display-name";
 import { createClient } from "@/lib/supabase/server";
 
@@ -29,7 +30,7 @@ export type FamilyContext = {
     | null;
 };
 
-export async function getFamilyContext(): Promise<FamilyContext> {
+export const getFamilyContext = cache(async function getFamilyContext(): Promise<FamilyContext> {
   const supabase = createClient();
   const {
     data: { user },
@@ -119,7 +120,7 @@ export async function getFamilyContext(): Promise<FamilyContext> {
     membership,
     family,
   };
-}
+});
 
 export function canAdminFamily(context: FamilyContext) {
   return context.membership?.role === "owner" || context.membership?.role === "admin";

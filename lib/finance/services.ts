@@ -1,5 +1,8 @@
 import "server-only";
 
+import { cache } from "react";
+import { createHash } from "node:crypto";
+
 export { commitFinanceImportArchive, previewFinanceImportArchive } from "@/lib/finance/import-service";
 export type { FinanceImportCommitResult, FinanceImportPreview, ImportPreviewCount } from "@/lib/finance/import-service";
 
@@ -13,6 +16,30 @@ export { cashflowEntriesForMonth, monthlyEntryAmount } from "@/lib/finance/summa
 
 //const ACTIVE = { deleted_at: null } as const;
 
+let financeWorkspaceExecutions = 0;
+let financeHistoryExecutions = 0;
+
+function financeMetricFamily(familyId: string) {
+  return createHash("sha256").update(familyId).digest("hex").slice(0, 8);
+}
+
+async function loadFinanceHistory(db: ReturnType<typeof createClient>, familyId: string) {
+  const measure = process.env.NODE_ENV === "development";
+  const startedAt = measure ? performance.now() : 0;
+  const data = await db.from("financial_entry_history").select("*").eq("family_id", familyId).order("changed_at", { ascending: false }).limit(500);
+  if (measure) {
+    financeHistoryExecutions += 1;
+    console.info("[finance_history_metric]", JSON.stringify({
+      executions: financeHistoryExecutions,
+      duration_ms: Math.round(performance.now() - startedAt),
+      rows: data.data?.length ?? 0,
+      payload_bytes: Buffer.byteLength(JSON.stringify(data.data ?? []), "utf8"),
+      family: financeMetricFamily(familyId),
+    }));
+  }
+  return data;
+}
+
 function throwIfError(error: { code?: string; message: string } | null, scope: string) {
   if (error) {
     console.error("[familyos_finance_query_error]", JSON.stringify({ scope, code: error.code ?? null }));
@@ -24,7 +51,13 @@ export function currentCompetence(now = new Date()) {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
-export async function getFinanceWorkspace(familyId: string, includeEntries = true): Promise<FinanceWorkspace> {
+export const getFinanceWorkspace = cache(async function getFinanceWorkspace(familyId: string, includeEntries = true): Promise<FinanceWorkspace> {
+  const measure = process.env.NODE_ENV === "development";
+  const startedAt = measure ? performance.now() : 0;
+  if (measure) {
+    financeWorkspaceExecutions += 1;
+    console.info("[finance_workspace_metric]", JSON.stringify({ executions: financeWorkspaceExecutions, phase: "start", includeEntries, family: financeMetricFamily(familyId) }));
+  }
   const db = createClient();
   const entriesPromise = includeEntries ? getAllFinancialEntries(familyId) : Promise.resolve([]);
   const results = await Promise.all([
@@ -43,13 +76,16 @@ export async function getFinanceWorkspace(familyId: string, includeEntries = tru
     db.from("exchange_rates").select("*").eq("family_id", familyId).order("rate_date", { ascending: false }),
     db.from("data_integrity_audit").select("*").eq("family_id", familyId).order("executed_at", { ascending: false }).limit(50),
     db.from("financial_alert_rules").select("*").eq("family_id", familyId).is("deleted_at", null).order("name"),
-    db.from("financial_entry_history").select("*").eq("family_id", familyId).order("changed_at", { ascending: false }).limit(500),
+    loadFinanceHistory(db, familyId),
     db.from("people").select("id,first_name,last_name").eq("family_id", familyId).is("deleted_at", null).order("first_name"),
   ]);
   const scopes = ["accounts", "categories", "cards", "recurrences", "installments", "invoices", "properties", "units", "leases", "shares", "assets", "positions", "exchange_rates", "integrity_audit", "alerts", "history", "people"];
   results.forEach((result, index) => throwIfError(result.error, scopes[index]));
   const [accounts, categories, cards, recurrences, installments, invoices, properties, units, leases, shares, assets, positions, exchangeRates, integrityAudit, alerts, history, people] = results;
   const entries = await entriesPromise;
+  if (measure) {
+    console.info("[finance_workspace_metric]", JSON.stringify({ executions: financeWorkspaceExecutions, phase: "end", includeEntries, duration_ms: Math.round(performance.now() - startedAt), family: financeMetricFamily(familyId) }));
+  }
   return {
     accounts: accounts.data ?? [], categories: categories.data ?? [], cards: cards.data ?? [], entries,
     recurrences: recurrences.data ?? [], installments: installments.data ?? [], invoices: invoices.data ?? [], properties: properties.data ?? [],
@@ -57,7 +93,7 @@ export async function getFinanceWorkspace(familyId: string, includeEntries = tru
     exchangeRates: exchangeRates.data ?? [], integrityAudit: integrityAudit.data ?? [],
     alerts: alerts.data ?? [], history: history.data ?? [], people: people.data ?? [],
   };
-}
+});
 
 async function getAllFinancialEntries(familyId: string) {
   const entries: FinancialEntryRow[] = [];

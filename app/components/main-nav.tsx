@@ -78,6 +78,7 @@ export function MainNav({ current }: MainNavProps) {
           return (
             <Link
               key={item.key}
+              prefetch={item.href === "/financas" ? false : undefined}
               href={item.href}
               aria-current={isCurrent ? "page" : undefined}
               className={`transition-colors ${
